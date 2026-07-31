@@ -1,0 +1,63 @@
+name: Implementation task
+description: Propose work under an approved IntentGuard umbrella.
+title: "[Task] "
+labels:
+  - "type:task"
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Use this form only after the work is linked to the authoritative
+        specification and an approved umbrella.
+  - type: input
+    id: parent
+    attributes:
+      label: Parent umbrella
+      description: Enter U01 through U08.
+      placeholder: U02
+    validations:
+      required: true
+  - type: input
+    id: traceability
+    attributes:
+      label: Requirement traceability
+      description: List the owning T, FR, NFR, and AC identifiers.
+      placeholder: T-002, FR-001, AC-001
+    validations:
+      required: true
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective and boundary
+      description: State the observable outcome, implementation boundary, and non-goals.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Give verifiable criteria without inventing results.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and expected evidence
+      description: List executable commands and the evidence they must produce.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: fallback
+    attributes:
+      label: Fallback and status consequence
+      description: Explain any fallback and whether strict MVP would fail.
+    validations:
+      required: true
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Definition of ready
+      options:
+        - label: Authority, prerequisites, files, estimate, and stop condition are identified.
+          required: true

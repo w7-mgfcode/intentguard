@@ -1,0 +1,49 @@
+name: Bug report
+description: Report reproducible behavior that conflicts with the specification.
+title: "[Bug] "
+labels:
+  - "type:task"
+body:
+  - type: input
+    id: requirement
+    attributes:
+      label: Affected requirement or contract
+      description: Link a requirement, interface contract, or acceptance criterion when known.
+      placeholder: FR-006 or docs/specification/docs/INTERFACE_CONTRACT.md
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and environment
+      description: Include sanitized logs, Python version, device, and artifact identifier where relevant.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed secrets, credentials, private data, and generated model weights.
+          required: true
+        - label: I did not describe mocked or synthetic behavior as real evidence.
+          required: true

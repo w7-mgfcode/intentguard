@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "repository": {
+    "owner": "w7-mgfcode",
+    "name": "intentguard",
+    "visibility": "public",
+    "description": "Confidence-aware support intent classification with reproducible evaluation, selective prediction and a typed FastAPI inference boundary.",
+    "license": "MIT",
+    "topics": [
+      "python",
+      "pytorch",
+      "huggingface",
+      "transformers",
+      "fastapi",
+      "machine-learning",
+      "nlp",
+      "intent-classification",
+      "model-evaluation",
+      "selective-prediction",
+      "mlops",
+      "production-ml"
+    ]
+  },
+  "labels": [
+    {"name": "type:umbrella", "color": "5319E7", "description": "Parent issue coordinating one MUST task"},
+    {"name": "type:task", "color": "1D76DB", "description": "Implementable child or defect"},
+    {"name": "priority:MUST", "color": "B60205", "description": "Required for strict Weekend MVP"},
+    {"name": "priority:SHOULD", "color": "FBCA04", "description": "Valuable after strict MVP if time permits"},
+    {"name": "priority:STRETCH", "color": "0E8A16", "description": "Weekend stretch only"},
+    {"name": "priority:POST-WEEKEND", "color": "6E7781", "description": "Explicitly outside Weekend MVP"},
+    {"name": "area:foundation", "color": "C5DEF5", "description": "Packaging, commands, configuration, and repository rules"},
+    {"name": "area:data", "color": "0052CC", "description": "Dataset loading, validation, splits, and provenance"},
+    {"name": "area:baseline", "color": "0E8A16", "description": "TF-IDF logistic-regression baseline"},
+    {"name": "area:model", "color": "5319E7", "description": "Transformer training and immutable artifacts"},
+    {"name": "area:evaluation", "color": "D4C5F9", "description": "Metrics, calibration, selective prediction, and reports"},
+    {"name": "area:api", "color": "1D76DB", "description": "Typed FastAPI inference and demo"},
+    {"name": "area:quality", "color": "BFDADC", "description": "Test, CI, acceptance, and quality gates"},
+    {"name": "area:documentation", "color": "0075CA", "description": "README, operations, limitations, and delivery evidence"},
+    {"name": "status:blocked", "color": "D93F0B", "description": "Cannot proceed under current prerequisites or constraints"}
+  ],
+  "project": {
+    "title": "IntentGuard — Weekend MVP",
+    "visibility": "public",
+    "fields": [
+      {"name": "Status", "type": "built-in-single-select", "options": ["Backlog", "Ready", "In progress", "Review", "Done"]},
+      {"name": "Priority", "type": "single-select", "options": ["MUST", "SHOULD", "STRETCH", "POST-WEEKEND"]},
+      {"name": "Estimate", "type": "number", "unit": "hours"},
+      {"name": "Parent issue", "type": "built-in-hierarchy"},
+      {"name": "Sub-issue progress", "type": "built-in-progress"}
+    ],
+    "views": [
+      {"name": "MVP Board", "layout": "board", "filter": "Priority:MUST", "group_by": "Status", "sort": ["Priority", "Estimate"]},
+      {"name": "Full Backlog", "layout": "table", "filter": "all real issues", "columns": ["Status", "Priority", "Parent issue", "Estimate", "Labels"], "sort": ["Priority", "Parent issue", "Title"]},
+      {"name": "Umbrella Progress", "layout": "table", "filter": "label:type:umbrella", "columns": ["Status", "Priority", "Estimate", "Sub-issue progress"], "sort": ["Title"]}
+    ]
+  },
+  "issues": [
+    {"id": "MVP", "title": "[MVP] Deliver IntentGuard Weekend MVP", "type": "master", "parent": null, "body_file": "docs/backlog/MASTER_ISSUE.md", "priority": "MUST", "labels": ["type:umbrella", "priority:MUST"], "estimate_hours": 16.0, "creation_order": 1},
+    {"id": "U01", "title": "U01 — Project foundation and reproducibility", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U01-project-foundation.md", "priority": "MUST", "area": "foundation", "estimate_hours": 1.0, "creation_order": 2},
+    {"id": "U02", "title": "U02 — BANKING77 data contract", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U02-banking77-data-contract.md", "priority": "MUST", "area": "data", "estimate_hours": 2.0, "creation_order": 3},
+    {"id": "U03", "title": "U03 — TF-IDF logistic-regression baseline", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U03-tfidf-baseline.md", "priority": "MUST", "area": "baseline", "estimate_hours": 3.0, "creation_order": 4},
+    {"id": "U04", "title": "U04 — DistilBERT training and immutable artifact", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U04-distilbert-artifact.md", "priority": "MUST", "area": "model", "estimate_hours": 3.0, "creation_order": 5},
+    {"id": "U05", "title": "U05 — Comparative evaluation and selective prediction", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U05-evaluation-selective-prediction.md", "priority": "MUST", "area": "evaluation", "estimate_hours": 2.0, "creation_order": 6},
+    {"id": "U06", "title": "U06 — FastAPI inference and real-artifact demo", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U06-fastapi-demo.md", "priority": "MUST", "area": "api", "estimate_hours": 2.0, "creation_order": 7},
+    {"id": "U07", "title": "U07 — Full validation and acceptance gate", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U07-full-validation.md", "priority": "MUST", "area": "quality", "estimate_hours": 1.5, "creation_order": 8},
+    {"id": "U08", "title": "U08 — Documentation and recruiter-ready delivery", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U08-documentation-delivery.md", "priority": "MUST", "area": "documentation", "estimate_hours": 1.5, "creation_order": 9},
+    {"id": "C01.1", "title": "C01.1 — Establish agent governance and repository skeleton", "type": "task", "parent": "U01", "body_file": "docs/backlog/tasks/C01.1-agent-instructions-skeleton.md", "priority": "MUST", "area": "foundation", "estimate_hours": 0.25, "creation_order": 10},
+    {"id": "C01.2", "title": "C01.2 — Configure Python packaging, lockfile, and reviewed defaults", "type": "task", "parent": "U01", "body_file": "docs/backlog/tasks/C01.2-python-packaging-lock-config.md", "priority": "MUST", "area": "foundation", "estimate_hours": 0.5, "creation_order": 11},
+    {"id": "C01.3", "title": "C01.3 — Establish Make, CI, collaboration, and foundation validation contracts", "type": "task", "parent": "U01", "body_file": "docs/backlog/tasks/C01.3-make-ci-collaboration.md", "priority": "MUST", "area": "foundation", "estimate_hours": 0.25, "creation_order": 12},
+    {"id": "C02.1", "title": "C02.1 — Pin and implement the BANKING77 loader", "type": "task", "parent": "U02", "body_file": "docs/backlog/tasks/C02.1-pin-banking77-loader.md", "priority": "MUST", "area": "data", "estimate_hours": 0.5, "creation_order": 13},
+    {"id": "C02.2", "title": "C02.2 — Validate canonical splits, label mapping, and provenance", "type": "task", "parent": "U02", "body_file": "docs/backlog/tasks/C02.2-canonical-splits-provenance.md", "priority": "MUST", "area": "data", "estimate_hours": 0.75, "creation_order": 14},
+    {"id": "C02.3", "title": "C02.3 — Integrate make data and enforce the data contract", "type": "task", "parent": "U02", "body_file": "docs/backlog/tasks/C02.3-data-command-contract-tests.md", "priority": "MUST", "area": "data", "estimate_hours": 0.75, "creation_order": 15},
+    {"id": "C03.1", "title": "C03.1 — Implement the TF-IDF logistic-regression baseline", "type": "task", "parent": "U03", "body_file": "docs/backlog/tasks/C03.1-tfidf-logistic-baseline.md", "priority": "MUST", "area": "baseline", "estimate_hours": 1.25, "creation_order": 16},
+    {"id": "C03.2", "title": "C03.2 — Persist and reload the baseline artifact with parity", "type": "task", "parent": "U03", "body_file": "docs/backlog/tasks/C03.2-baseline-artifact-parity.md", "priority": "MUST", "area": "baseline", "estimate_hours": 0.75, "creation_order": 17},
+    {"id": "C03.3", "title": "C03.3 — Measure the baseline and lock metric regression", "type": "task", "parent": "U03", "body_file": "docs/backlog/tasks/C03.3-baseline-report-metric-regression.md", "priority": "MUST", "area": "baseline", "estimate_hours": 1.0, "creation_order": 18},
+    {"id": "C04.1", "title": "C04.1 — Verify the DistilBERT training environment and forward pass", "type": "task", "parent": "U04", "body_file": "docs/backlog/tasks/C04.1-distilbert-environment-smoke.md", "priority": "MUST", "area": "model", "estimate_hours": 0.5, "creation_order": 19},
+    {"id": "C04.2", "title": "C04.2 — Fine-tune DistilBERT and produce validation predictions", "type": "task", "parent": "U04", "body_file": "docs/backlog/tasks/C04.2-finetune-validation-predictions.md", "priority": "MUST", "area": "model", "estimate_hours": 1.25, "creation_order": 20},
+    {"id": "C04.3", "title": "C04.3 — Select the validation threshold and finalize the immutable artifact", "type": "task", "parent": "U04", "body_file": "docs/backlog/tasks/C04.3-threshold-immutable-artifact.md", "priority": "MUST", "area": "model", "estimate_hours": 1.25, "creation_order": 21},
+    {"id": "C05.1", "title": "C05.1 — Produce comparable baseline and transformer classification metrics", "type": "task", "parent": "U05", "body_file": "docs/backlog/tasks/C05.1-comparable-classification-metrics.md", "priority": "MUST", "area": "evaluation", "estimate_hours": 0.75, "creation_order": 22},
+    {"id": "C05.2", "title": "C05.2 — Measure calibration, selective prediction, and latency", "type": "task", "parent": "U05", "body_file": "docs/backlog/tasks/C05.2-calibration-selective-latency.md", "priority": "MUST", "area": "evaluation", "estimate_hours": 0.75, "creation_order": 23},
+    {"id": "C05.3", "title": "C05.3 — Evaluate the unsupported-request fixture separately", "type": "task", "parent": "U05", "body_file": "docs/backlog/tasks/C05.3-unsupported-fixture-report.md", "priority": "MUST", "area": "evaluation", "estimate_hours": 0.5, "creation_order": 24},
+    {"id": "C06.1", "title": "C06.1 — Implement API schemas, stable errors, request IDs, and safe logging", "type": "task", "parent": "U06", "body_file": "docs/backlog/tasks/C06.1-api-schemas-errors-logging.md", "priority": "MUST", "area": "api", "estimate_hours": 0.5, "creation_order": 25},
+    {"id": "C06.2", "title": "C06.2 — Load the artifact and implement health and prediction endpoints", "type": "task", "parent": "U06", "body_file": "docs/backlog/tasks/C06.2-predictor-health-predict.md", "priority": "MUST", "area": "api", "estimate_hours": 1.0, "creation_order": 26},
+    {"id": "C06.3", "title": "C06.3 — Deliver the strict real-artifact demonstration", "type": "task", "parent": "U06", "body_file": "docs/backlog/tasks/C06.3-real-artifact-demo.md", "priority": "MUST", "area": "api", "estimate_hours": 0.5, "creation_order": 27},
+    {"id": "C07.1", "title": "C07.1 — Orchestrate the full CPU validation suite", "type": "task", "parent": "U07", "body_file": "docs/backlog/tasks/C07.1-cpu-suite-validation-orchestration.md", "priority": "MUST", "area": "quality", "estimate_hours": 0.75, "creation_order": 28},
+    {"id": "C07.2", "title": "C07.2 — Audit acceptance criteria and issue the Sunday verdict", "type": "task", "parent": "U07", "body_file": "docs/backlog/tasks/C07.2-acceptance-status-audit.md", "priority": "MUST", "area": "quality", "estimate_hours": 0.75, "creation_order": 29},
+    {"id": "C08.1", "title": "C08.1 — Publish the recruiter-facing README", "type": "task", "parent": "U08", "body_file": "docs/backlog/tasks/C08.1-recruiter-readme.md", "priority": "MUST", "area": "documentation", "estimate_hours": 0.5, "creation_order": 30},
+    {"id": "C08.2", "title": "C08.2 — Finalize operations, implementation status, and limitations", "type": "task", "parent": "U08", "body_file": "docs/backlog/tasks/C08.2-operations-status-limitations.md", "priority": "MUST", "area": "documentation", "estimate_hours": 0.5, "creation_order": 31},
+    {"id": "C08.3", "title": "C08.3 — Validate the five-minute delivery path", "type": "task", "parent": "U08", "body_file": "docs/backlog/tasks/C08.3-five-minute-delivery.md", "priority": "MUST", "area": "documentation", "estimate_hours": 0.5, "creation_order": 32}
+  ],
+  "relationships": [
+    {"parent": "MVP", "children": ["U01", "U02", "U03", "U04", "U05", "U06", "U07", "U08"]},
+    {"parent": "U01", "children": ["C01.1", "C01.2", "C01.3"]},
+    {"parent": "U02", "children": ["C02.1", "C02.2", "C02.3"]},
+    {"parent": "U03", "children": ["C03.1", "C03.2", "C03.3"]},
+    {"parent": "U04", "children": ["C04.1", "C04.2", "C04.3"]},
+    {"parent": "U05", "children": ["C05.1", "C05.2", "C05.3"]},
+    {"parent": "U06", "children": ["C06.1", "C06.2", "C06.3"]},
+    {"parent": "U07", "children": ["C07.1", "C07.2"]},
+    {"parent": "U08", "children": ["C08.1", "C08.2", "C08.3"]}
+  ],
+  "creation_phases": [
+    "verify authentication, duplicates, and approval",
+    "create labels and project fields",
+    "create master issue",
+    "create umbrellas in U01–U08 order",
+    "create children in manifest order",
+    "establish hierarchy",
+    "add project items and populate fields",
+    "configure views",
+    "perform read-only verification"
+  ]
+}

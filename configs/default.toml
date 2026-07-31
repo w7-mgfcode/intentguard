@@ -1,0 +1,23 @@
+[project]
+name = "intentguard"
+seed = 42
+
+[data]
+dataset_id = "PolyAI/banking77"
+dataset_revision = "UNRESOLVED"
+
+[model]
+base_model_id = "distilbert/distilbert-base-uncased"
+base_model_revision = "UNRESOLVED"
+
+[training]
+max_sequence_length = 96
+threshold_source = "validation"
+
+[paths]
+data_root = "data"
+artifact_root = "artifacts"
+report_root = "reports"
+
+[status]
+allowed = ["Implemented", "Measured", "Partial", "Mocked", "Blocked", "Planned"]

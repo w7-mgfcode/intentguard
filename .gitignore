@@ -1,0 +1,49 @@
+# Python and build outputs
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments and local configuration
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.fpat/github-execution-state.json
+
+# Test, type, lint, and coverage caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Model weights and dataset caches
+*.bin
+*.ckpt
+*.onnx
+*.pt
+*.pth
+*.safetensors
+.cache/
+.huggingface/
+
+# Generated project outputs; retain the contracts
+data/*
+!data/README.md
+artifacts/*
+!artifacts/README.md
+reports/*
+!reports/README.md
+
+# Editor and operating-system temporaries
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
