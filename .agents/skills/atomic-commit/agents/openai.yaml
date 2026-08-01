@@ -1,0 +1,4 @@
+interface:
+  display_name: "Atomic Commit"
+  short_description: "Validate and prepare small, evidence-backed commits safely."
+  default_prompt: "Prepare a high-quality atomic commit from the current working tree, validate scope and evidence, and stop before commit unless explicitly approved."
