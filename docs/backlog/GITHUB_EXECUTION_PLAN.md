@@ -9,9 +9,14 @@ items, field values, and views. Resource adoption is never implicit: an exact
 remote match that is absent from execution state is unowned until a separate,
 identity-specific approval and adoption operation succeeds.
 
-Run every block below from the reviewed repository root in **one Bash
-session**, in order. Never print credentials, silently switch accounts, use
-`--force`, delete and recreate a resource as recovery, or use
+Run every block below from the reviewed repository root in the order stated by
+the **Ordered gate checklist**. Gate D intentionally runs section 8 before
+section 7 so Project creation and its possible default-view side effect are
+captured first. Use one Bash session through the automated Gate D boundary,
+then start a reviewed resume session for the authenticated UI-evidence import
+after the user finishes the manual view configuration. Never print
+credentials, silently switch accounts, use `--force`, delete and recreate a
+resource as recovery, or use
 `gh pr create --dry-run`. Every mutation is additive, immediately read back,
 and recorded in the ignored `.fpat/github-execution-state.json`. A matching
 remote resource that is not recorded in state requires explicit adoption; it
@@ -87,6 +92,8 @@ export IG_PROJECT_URL=''
 export IG_PRIORITY_FIELD_ID=''
 export IG_STATUS_FIELD_ID=''
 export IG_ESTIMATE_FIELD_ID=''
+export IG_PARENT_FIELD_ID=''
+export IG_SUB_ISSUE_PROGRESS_FIELD_ID=''
 export IG_MUST_OPTION_ID=''
 export IG_BACKLOG_OPTION_ID=''
 export IG_MASTER_NUMBER=''
@@ -103,6 +110,7 @@ export IG_MUTATION_STDERR="${IG_TEMP_DIR}/mutation.stderr"
 export IG_FIELDS_JSON_FILE="${IG_TEMP_DIR}/fields.json"
 export IG_ITEMS_JSON_FILE="${IG_TEMP_DIR}/items.json"
 export IG_VIEWS_JSON_FILE="${IG_TEMP_DIR}/views.json"
+export IG_UI_EVIDENCE_FILE="${IG_TEMP_DIR}/authenticated-ui-view-evidence.json"
 export IG_CLI_SUBISSUE_MODE='graphql'
 
 command -v bash >/dev/null
@@ -389,6 +397,7 @@ document = {
     "views": {},
     "adoption_required": None,
     "adoption_history": [],
+    "attempt_history": [],
     "failure_history": [],
     "last_attempted_operation": None,
     "last_verified_operation": None,
@@ -474,6 +483,158 @@ def clean_error(value):
     value = re.sub(r"\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b", "[REDACTED]", value)
     return value.replace("\x00", "")[:2000]
 
+def manifest_document():
+    path = Path(state["manifest_path"])
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if sha256(path.read_bytes()).hexdigest() != state["manifest_sha256"]:
+        raise SystemExit("manifest checksum changed during execution")
+    return document
+
+def expected_view_properties(view):
+    directions = {
+        "MVP Board": ["field-option-order", "ascending"],
+        "Full Backlog": ["field-option-order", "ascending", "ascending"],
+        "Umbrella Progress": ["ascending"],
+    }
+    normalized_filter = "no-active-filter" if view["name"] == "Full Backlog" else view["filter"]
+    return {
+        "name": view["name"],
+        "layout": view["layout"],
+        "filter": normalized_filter,
+        "columns": view.get("columns", []),
+        "group_by": view.get("group_by"),
+        "sort": view.get("sort", []),
+        "sort_directions": directions[view["name"]],
+    }
+
+def valid_utc_timestamp(value):
+    if not isinstance(value, str) or not value.endswith("Z"):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+def validate_verified_view(key, record, manifest):
+    views = {view["name"]: view for view in manifest["project"]["views"]}
+    if key not in views or record.get("manifest_identifier") != key or record.get("view_name") != key:
+        raise SystemExit("view manifest identity mismatch")
+    mandatory = {
+        "resource_type", "manifest_identifier", "view_name", "remote_view_id",
+        "remote_view_url", "project_id", "project_url", "source",
+        "expected_properties", "observed_properties", "verification_method",
+        "verified_by", "verification_timestamp", "attestation_reference",
+        "verified", "manual_required", "ui_evidence", "screenshot_evidence",
+    }
+    if mandatory - record.keys():
+        raise SystemExit(f"incomplete verified view record: {key}")
+    if record["resource_type"] != "project-view" or record["source"] not in {
+        "project-default-manually-configured", "manual-ui-created"
+    }:
+        raise SystemExit(f"invalid verified view source: {key}")
+    if not record["remote_view_id"] or not record["remote_view_url"]:
+        raise SystemExit(f"verified view lacks remote identity: {key}")
+    if record["project_id"] != state["project"].get("id") or record["project_url"] != state["project"].get("url"):
+        raise SystemExit(f"verified view Project identity mismatch: {key}")
+    expected = expected_view_properties(views[key])
+    if record["expected_properties"] != expected or record["observed_properties"] != expected:
+        raise SystemExit(f"verified view properties mismatch: {key}")
+    if record["verification_method"] != "authenticated-github-ui" or record["verified_by"] != manifest["repository"]["owner"]:
+        raise SystemExit(f"verified view lacks authenticated UI identity: {key}")
+    if not valid_utc_timestamp(record["verification_timestamp"]):
+        raise SystemExit(f"verified view timestamp is invalid: {key}")
+    attestation = "I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md."
+    if record["attestation_reference"] != attestation:
+        raise SystemExit(f"verified view attestation mismatch: {key}")
+    if record["verified"] is not True or record["manual_required"] is not False:
+        raise SystemExit(f"view is not fully verified: {key}")
+    evidence = record["ui_evidence"]
+    required_evidence = {
+        "authenticated_account_verified", "project_identity_verified",
+        "view_identity_verified", "name_verified", "layout_verified",
+        "filter_verified", "visible_fields_verified", "group_by_verified",
+        "sort_verified", "exact_view_set_verified", "inspection_completed",
+    }
+    if not isinstance(evidence, dict) or required_evidence - evidence.keys():
+        raise SystemExit(f"view UI evidence is incomplete: {key}")
+    if any(evidence[field] is not True for field in required_evidence):
+        raise SystemExit(f"view UI evidence is not fully verified: {key}")
+    if evidence.get("screenshot_only") is not False or not evidence.get("inspection_reference"):
+        raise SystemExit(f"screenshot-only or unidentified UI evidence: {key}")
+    screenshots = record["screenshot_evidence"]
+    if not isinstance(screenshots, list) or any(
+        not isinstance(item, dict) or not item.get("description") or
+        len(item.get("sha256", "")) != 64 or
+        any(character not in "0123456789abcdef" for character in item["sha256"])
+        for item in screenshots
+    ):
+        raise SystemExit(f"invalid optional screenshot evidence: {key}")
+
+def validate_pending_view(key, record, manifest):
+    required = {
+        "resource_type", "manifest_identifier", "view_name", "project_id",
+        "project_url", "remote_view_id", "remote_view_url", "source",
+        "expected_properties", "status", "verified", "manual_required",
+        "recorded_at",
+    }
+    allowed = required | {"original_remote_name"}
+    if required - record.keys() or record.keys() - allowed:
+        raise SystemExit(f"pending view record is incomplete or has unknown fields: {key}")
+    views = {view["name"]: view for view in manifest["project"]["views"]}
+    if key not in views or record["manifest_identifier"] != key or record["view_name"] != key:
+        raise SystemExit("pending view manifest identity mismatch")
+    if record["resource_type"] != "project-view" or record["status"] != "manual-pending":
+        raise SystemExit("pending view record type or status is invalid")
+    if record["project_id"] != state["project"].get("id") or record["project_url"] != state["project"].get("url"):
+        raise SystemExit("pending view Project identity mismatch")
+    if record["expected_properties"] != expected_view_properties(views[key]):
+        raise SystemExit("pending view expected properties differ from the manifest")
+    if record["verified"] is not False or record["manual_required"] is not True:
+        raise SystemExit("pending view cannot be verified or non-manual")
+    if not valid_utc_timestamp(record["recorded_at"]):
+        raise SystemExit("pending view timestamp is invalid")
+    remote_id = record["remote_view_id"]
+    remote_url = record["remote_view_url"]
+    if bool(remote_id) != bool(remote_url):
+        raise SystemExit("pending view remote ID and URL must be present together")
+    if record["source"] == "project-creation-side-effect":
+        if key != "MVP Board" or not remote_id or not remote_url:
+            raise SystemExit("default Project view must be reserved for MVP Board")
+        if "original_remote_name" not in record or not isinstance(record["original_remote_name"], str):
+            raise SystemExit("default Project view lacks its original remote name")
+    elif record["source"] == "manual-ui-required":
+        if remote_id is not None or remote_url is not None or "original_remote_name" in record:
+            raise SystemExit("uncreated manual view cannot have a remote identity")
+    else:
+        raise SystemExit("pending view source is invalid")
+
+def canonical_pending_view(record):
+    return json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+def validate_view_collection(manifest):
+    manifest_identifiers = set()
+    view_names = set()
+    remote_ids = set()
+    for state_key, existing_record in state["views"].items():
+        if not isinstance(existing_record, dict):
+            raise SystemExit("view state contains a non-object record")
+        if existing_record.get("verified") is True:
+            validate_verified_view(state_key, existing_record, manifest)
+        else:
+            validate_pending_view(state_key, existing_record, manifest)
+        manifest_identifier = existing_record["manifest_identifier"]
+        view_name = existing_record["view_name"]
+        remote_id = existing_record.get("remote_view_id")
+        if manifest_identifier in manifest_identifiers or view_name in view_names:
+            raise SystemExit("duplicate manifest identifier or view name in state")
+        if remote_id and remote_id in remote_ids:
+            raise SystemExit("duplicate remote view ID in state")
+        manifest_identifiers.add(manifest_identifier)
+        view_names.add(view_name)
+        if remote_id:
+            remote_ids.add(remote_id)
+
 if operation == "set-scalar":
     require(2)
     field, raw = args
@@ -484,13 +645,69 @@ if operation == "set-scalar":
 elif operation in {"repository", "project", "fields"}:
     require(1)
     state[operation] = object_arg(args[0])
-elif operation in {"label", "issue", "hierarchy", "project-item", "view"}:
+elif operation in {"label", "issue", "hierarchy", "project-item"}:
     require(2)
     key, raw = args
-    section = {"label": "labels", "issue": "issues", "hierarchy": "hierarchy", "project-item": "project_items", "view": "views"}[operation]
+    section = {"label": "labels", "issue": "issues", "hierarchy": "hierarchy", "project-item": "project_items"}[operation]
     if not key:
         raise SystemExit("state record key is empty")
     state[section][key] = object_arg(raw)
+elif operation == "manual-view-pending":
+    require(2)
+    key, raw = args
+    record = object_arg(raw)
+    manifest = manifest_document()
+    validate_view_collection(manifest)
+    validate_pending_view(key, record, manifest)
+    existing = state["views"].get(key)
+    if existing is not None:
+        if existing.get("verified") is True:
+            raise SystemExit("cannot downgrade a verified view to pending")
+        if canonical_pending_view(existing) == canonical_pending_view(record):
+            raise SystemExit(0)
+        raise SystemExit("conflicting pending view record; stored identity is immutable")
+    if any(other.get("manifest_identifier") == record["manifest_identifier"] for other in state["views"].values()):
+        raise SystemExit("duplicate pending manifest identifier")
+    if any(other.get("view_name") == record["view_name"] for other in state["views"].values()):
+        raise SystemExit("duplicate pending view name")
+    remote_id = record.get("remote_view_id")
+    if remote_id and any(
+        other.get("remote_view_id") == remote_id for other in state["views"].values()
+    ):
+        raise SystemExit("duplicate pending remote view ID")
+    state["views"][key] = record
+    validate_view_collection(manifest)
+elif operation == "manual-view-verified":
+    require(2)
+    key, raw = args
+    record = object_arg(raw)
+    manifest = manifest_document()
+    validate_view_collection(manifest)
+    pending = state["views"].get(key)
+    if not isinstance(pending, dict) or pending.get("status") != "manual-pending":
+        raise SystemExit("verified view lacks its pending lifecycle record")
+    expected_source = "project-default-manually-configured" if pending.get("source") == "project-creation-side-effect" else "manual-ui-created"
+    if record.get("source") != expected_source:
+        raise SystemExit("verified view source contradicts its pending lifecycle")
+    if record.get("manifest_identifier") != pending.get("manifest_identifier") or record.get("view_name") != pending.get("view_name"):
+        raise SystemExit("verified view identity differs from pending state")
+    if record.get("project_id") != pending.get("project_id") or record.get("project_url") != pending.get("project_url"):
+        raise SystemExit("verified view Project identity differs from pending state")
+    if record.get("expected_properties") != pending.get("expected_properties"):
+        raise SystemExit("verified view expected properties differ from pending state")
+    if pending.get("remote_view_id") and (
+        record.get("remote_view_id") != pending.get("remote_view_id") or
+        record.get("remote_view_url") != pending.get("remote_view_url")
+    ):
+        raise SystemExit("default view remote identity changed during manual configuration")
+    validate_verified_view(key, record, manifest)
+    if any(
+        other_key != key and other.get("remote_view_id") == record["remote_view_id"]
+        for other_key, other in state["views"].items()
+    ):
+        raise SystemExit("duplicate verified remote view ID")
+    state["views"][key] = record
+    validate_view_collection(manifest)
 elif operation == "adoption-required":
     require(5)
     resource_type, manifest_identifier, remote_identifier, expected_raw, observed_raw = args
@@ -546,6 +763,14 @@ elif operation in {"adopt-label", "adopt-project-link"}:
     state["adoption_required"] = None
 elif operation == "attempt":
     require(1)
+    history = state.setdefault("attempt_history", [])
+    if not isinstance(history, list):
+        raise SystemExit("attempt history is invalid")
+    history.append({
+        "operation": args[0],
+        "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "source": "runbook",
+    })
     state["last_attempted_operation"] = args[0]
 elif operation == "verified":
     require(1)
@@ -632,9 +857,14 @@ elif operation == "finalize":
     canonical_adopted = [json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) for record in adopted_records]
     if sorted(canonical_history) != sorted(canonical_adopted):
         raise SystemExit("adoption history differs from adopted managed resources")
-    for record in state["views"].values():
-        if not (record.get("verified") is True or record.get("manual_required") is True):
-            raise SystemExit("view lacks verification or manual-required status")
+    manifest_views = {view["name"]: view for view in manifest["project"]["views"]}
+    if len(manifest_views) != 3 or set(state["views"]) != set(manifest_views):
+        raise SystemExit("view state does not exactly match the three manifest views")
+    for name, record in state["views"].items():
+        validate_verified_view(name, record, manifest)
+    remote_ids = [record["remote_view_id"] for record in state["views"].values()]
+    if len(set(remote_ids)) != 3:
+        raise SystemExit("verified view remote IDs are not unique")
     state["completed"] = True
     state["finalized_at"] = args[0]
     state["last_verified_operation"] = "final-read-only-verification"
@@ -660,6 +890,7 @@ try:
 finally:
     if temporary.exists():
         temporary.unlink()
+json.loads(state_path.read_text(encoding="utf-8"))
 PY
 }
 
@@ -682,6 +913,23 @@ if value is not None:
 PY
 }
 ```
+
+The `manual-view-pending` and `manual-view-verified` operations update only the
+named `views` entry. A separate `verified` operation may update the normal
+operation markers after read-back succeeds. Both paths preserve schema version
+1, every Gate C evidence field, and all append-only attempt, failure, and
+adoption history; they reject incomplete, duplicate, or contradictory view
+records before the atomic replacement. A repeated pending payload is
+idempotent only when its complete validated canonical JSON object is identical
+to the stored pending record. That exact match exits successfully before a
+temporary file is opened, so state bytes and checksums remain unchanged. Any
+difference—including Project identity, expected properties, source, view name,
+or an already bound remote identity—is a nonzero conflict and cannot replace
+the stored record. A remote identity may first be bound to an unbound pending
+record only through `manual-view-verified`. Before either operation, the helper
+validates the complete view collection: manifest identifiers and view names
+must be unique, every non-empty remote view ID must be unique, and every record
+must retain the state-owned Project ID and URL.
 
 ## 5. Failure-recording and verification wrappers
 
@@ -1074,7 +1322,12 @@ printf 'Verified adoption recorded for %s; restart the complete label loop.\n' "
 ## 8. Project creation and repository link — REMOTE WRITE, Gate D
 
 An exact-title Project that is absent from state requires explicit adoption.
-The creation result and public visibility are immediately read back.
+The creation result and public visibility are immediately read back. The same
+creation read-back also inventories zero or one implicit default view. A
+single view created as part of that exact Project mutation is recorded as a
+Project-creation side effect and reserved for **MVP Board**; it is not an
+adoption. More than one view, or a view first discovered on a later resume
+without a state record, stops execution.
 
 ```bash
 ig_verify_project_identity() {
@@ -1091,6 +1344,33 @@ if sys.argv[5]=="true" and d.get("public") is not True:
 PY
 }
 
+ig_read_views_request() {
+  gh api -H "X-GitHub-Api-Version: ${IG_API_VERSION}" "$ig_views_endpoint"
+}
+
+ig_stream_remote_views() {
+  local payload="$1"
+  uv run --locked python - "$payload" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+rows = payload.get("views", payload if isinstance(payload, list) else [])
+if not isinstance(rows, list):
+    raise SystemExit("Project view listing has an unsupported shape")
+seen = set()
+for row in rows:
+    remote_id = str(row.get("id") or row.get("node_id") or "")
+    remote_url = str(row.get("html_url") or row.get("url") or "")
+    if not remote_id or not remote_url or remote_id in seen:
+        raise SystemExit("Project view listing has missing or duplicate identity")
+    seen.add(remote_id)
+    record = {"id": remote_id, "url": remote_url, "name": row.get("name") or ""}
+    sys.stdout.buffer.write(json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode() + b"\0")
+PY
+}
+
+ig_project_created_now=0
 ig_project_state="$(ig_state_entry project primary)"
 if test -n "$ig_project_state"; then
   mapfile -d '' -t ig_project_values < <(ig_json_fields "$ig_project_state" number id url)
@@ -1112,12 +1392,80 @@ else
   ig_verify_operation '08-create-project' ig_verify_project_identity false || exit 1
   ig_project_record="$(uv run --locked python - "$IG_PROJECT_NUMBER" "$IG_PROJECT_ID" "$IG_PROJECT_URL" <<'PY'
 import json,sys
-print(json.dumps({"number":int(sys.argv[1]),"id":sys.argv[2],"url":sys.argv[3],"public":False,"linked_repository":None,"verified":True},separators=(",",":")))
+print(json.dumps({"number":int(sys.argv[1]),"id":sys.argv[2],"url":sys.argv[3],"public":False,"linked_repository":None,"source":"created","creation_operation":"08-create-project","verified":True},separators=(",",":")))
 PY
 )"
   ig_state project "$ig_project_record"
+  ig_project_created_now=1
 fi
 test -n "$IG_PROJECT_NUMBER"; test -n "$IG_PROJECT_ID"; test -n "$IG_PROJECT_URL"
+
+# Capture the implicit default view only during the direct read-back of the
+# Project mutation. A later unrecorded remote view is unowned and requires an
+# explicit, resource-specific adoption decision.
+ig_views_endpoint="users/${IG_OWNER_ID}/projectsV2/${IG_PROJECT_NUMBER}/views"
+if test "$IG_OWNER_TYPE" = 'Organization'; then
+  ig_views_endpoint="orgs/${IG_OWNER}/projectsV2/${IG_PROJECT_NUMBER}/views"
+fi
+ig_remote_views_json="$(ig_read_views_request)"
+mapfile -d '' -t ig_remote_view_rows < <(ig_stream_remote_views "$ig_remote_views_json")
+ig_mvp_view_state="$(ig_state_entry views 'MVP Board')"
+if test "$ig_project_created_now" -eq 1; then
+  test -z "$ig_mvp_view_state"
+  test "${#ig_remote_view_rows[@]}" -le 1 || { printf '%s\n' 'HARD STOP: Project creation returned more than one unexpected view.' >&2; exit 1; }
+  if test "${#ig_remote_view_rows[@]}" -eq 1; then
+    mapfile -d '' -t ig_default_view_values < <(ig_json_fields "${ig_remote_view_rows[0]}" id url name)
+    ig_default_view_record="$(uv run --locked python - "$IG_MANIFEST_FILE" "$IG_PROJECT_ID" "$IG_PROJECT_URL" "${ig_default_view_values[0]}" "${ig_default_view_values[1]}" "${ig_default_view_values[2]}" <<'PY'
+import json,sys
+from datetime import datetime,timezone
+from pathlib import Path
+manifest=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+view=next(row for row in manifest["project"]["views"] if row["name"]=="MVP Board")
+expected={
+    "name":view["name"], "layout":view["layout"], "filter":view["filter"],
+    "columns":view.get("columns",[]), "group_by":view.get("group_by"),
+    "sort":view.get("sort",[]), "sort_directions":["field-option-order","ascending"],
+}
+print(json.dumps({
+    "resource_type":"project-view", "manifest_identifier":"MVP Board",
+    "view_name":"MVP Board", "project_id":sys.argv[2], "project_url":sys.argv[3],
+    "remote_view_id":sys.argv[4], "remote_view_url":sys.argv[5],
+    "original_remote_name":sys.argv[6], "source":"project-creation-side-effect",
+    "expected_properties":expected,
+    "status":"manual-pending", "verified":False, "manual_required":True,
+    "recorded_at":datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z"),
+},ensure_ascii=False,sort_keys=True,separators=(",",":")))
+PY
+)"
+    ig_state manual-view-pending 'MVP Board' "$ig_default_view_record"
+  fi
+elif test -n "$ig_mvp_view_state"; then
+  ig_recorded_default_id="$(uv run --locked python -c 'import json,sys; print(json.loads(sys.argv[1]).get("remote_view_id") or "")' "$ig_mvp_view_state")"
+  if test -n "$ig_recorded_default_id"; then
+    test "$(uv run --locked python - "$ig_remote_views_json" "$ig_recorded_default_id" <<'PY'
+import json,sys
+payload=json.loads(sys.argv[1]); rows=payload.get("views",payload if isinstance(payload,list) else [])
+print(sum(str(row.get("id") or row.get("node_id") or "")==sys.argv[2] for row in rows))
+PY
+)" -eq 1 || { printf '%s\n' 'STOP: recorded default view identity no longer matches the Project.' >&2; exit 1; }
+  fi
+elif test "${#ig_remote_view_rows[@]}" -ne 0; then
+  test "${#ig_remote_view_rows[@]}" -eq 1 || { printf '%s\n' 'HARD STOP: multiple unrecorded Project views exist.' >&2; exit 1; }
+  mapfile -d '' -t ig_unowned_view_values < <(ig_json_fields "${ig_remote_view_rows[0]}" id url name)
+  ig_unowned_expected="$(uv run --locked python - "$IG_PROJECT_ID" "$IG_PROJECT_URL" <<'PY'
+import json,sys
+print(json.dumps({"project_id":sys.argv[1],"project_url":sys.argv[2],"reserved_target":"MVP Board"},sort_keys=True,separators=(",",":")))
+PY
+)"
+  ig_unowned_observed="$(uv run --locked python - "${ig_unowned_view_values[0]}" "${ig_unowned_view_values[1]}" "${ig_unowned_view_values[2]}" <<'PY'
+import json,sys
+print(json.dumps({"remote_view_id":sys.argv[1],"remote_view_url":sys.argv[2],"remote_view_name":sys.argv[3]},ensure_ascii=False,sort_keys=True,separators=(",",":")))
+PY
+)"
+  ig_state adoption-required project-view 'MVP Board' "${ig_unowned_view_values[0]}" "$ig_unowned_expected" "$ig_unowned_observed"
+  printf '%s\n' 'ADOPTION REQUIRED: a Project view exists remotely but is absent from execution state.' >&2
+  exit 1
+fi
 
 ig_project_is_public="$(gh project view "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --format json | uv run --locked python -c 'import json,sys; print(int(json.load(sys.stdin).get("public") is True))')"
 if test "$ig_project_is_public" -eq 0; then
@@ -1329,9 +1677,10 @@ printf '%s\n' 'Verified repository–Project link adoption recorded; restart sec
 ## 9. Project fields and option IDs — REMOTE WRITE, Gate D
 
 Create Priority and Estimate only when absent. An unrecorded existing custom
-field requires explicit adoption. Then retrieve all fields, require exactly one
-Status, Priority, and Estimate, extract node/option IDs, persist them, and read
-back exact names and options before any item consumes the IDs.
+field requires explicit adoption. Then retrieve all fields; require exactly one
+Status, Priority, Estimate, Parent issue, and Sub-issue progress field; extract
+their node and required option IDs; persist all five fields; and read back exact
+names and options before any item consumes the IDs.
 
 ```bash
 ig_verify_priority_field() {
@@ -1362,7 +1711,7 @@ mapfile -d '' -t ig_field_counts < <(
 import json,sys
 from pathlib import Path
 fields=json.loads(Path(sys.argv[1]).read_text())["fields"]
-for name in ("Status","Priority","Estimate"):
+for name in ("Status","Priority","Estimate","Parent issue","Sub-issue progress"):
     sys.stdout.buffer.write(str(sum(row["name"]==name for row in fields)).encode()+b"\0")
 PY
 )
@@ -1393,7 +1742,7 @@ remote=json.loads(Path(sys.argv[1]).read_text())["fields"]
 manifest=json.loads(Path(sys.argv[2]).read_text())
 expected={f["name"]:f for f in manifest["project"]["fields"]}
 selected={}
-for name in ("Status","Priority","Estimate"):
+for name in ("Status","Priority","Estimate","Parent issue","Sub-issue progress"):
     rows=[row for row in remote if row.get("name")==name]
     if len(rows)!=1 or not rows[0].get("id"):
         raise SystemExit(f"required field {name} is absent, duplicated, or has no ID")
@@ -1404,28 +1753,38 @@ if list(priority_options) != expected["Priority"]["options"]:
     raise SystemExit("Priority options differ from manifest")
 if list(status_options) != expected["Status"]["options"]:
     raise SystemExit("Status options differ from manifest")
-values=(selected["Priority"]["id"],selected["Status"]["id"],selected["Estimate"]["id"],priority_options.get("MUST"),status_options.get("Backlog"))
+values=(
+    selected["Priority"]["id"], selected["Status"]["id"],
+    selected["Estimate"]["id"], selected["Parent issue"]["id"],
+    selected["Sub-issue progress"]["id"], priority_options.get("MUST"),
+    status_options.get("Backlog"),
+)
 if any(not value for value in values):
     raise SystemExit("required field or option ID is empty")
 for value in values:
     sys.stdout.buffer.write(value.encode()+b"\0")
 PY
 )
-test "${#ig_field_values[@]}" -eq 5
+test "${#ig_field_values[@]}" -eq 7
 IG_PRIORITY_FIELD_ID="${ig_field_values[0]}"
 IG_STATUS_FIELD_ID="${ig_field_values[1]}"
 IG_ESTIMATE_FIELD_ID="${ig_field_values[2]}"
-IG_MUST_OPTION_ID="${ig_field_values[3]}"
-IG_BACKLOG_OPTION_ID="${ig_field_values[4]}"
-for ig_required_id in "$IG_PRIORITY_FIELD_ID" "$IG_STATUS_FIELD_ID" "$IG_ESTIMATE_FIELD_ID" "$IG_MUST_OPTION_ID" "$IG_BACKLOG_OPTION_ID"; do
+IG_PARENT_FIELD_ID="${ig_field_values[3]}"
+IG_SUB_ISSUE_PROGRESS_FIELD_ID="${ig_field_values[4]}"
+IG_MUST_OPTION_ID="${ig_field_values[5]}"
+IG_BACKLOG_OPTION_ID="${ig_field_values[6]}"
+for ig_required_id in "$IG_PRIORITY_FIELD_ID" "$IG_STATUS_FIELD_ID" "$IG_ESTIMATE_FIELD_ID" "$IG_PARENT_FIELD_ID" "$IG_SUB_ISSUE_PROGRESS_FIELD_ID" "$IG_MUST_OPTION_ID" "$IG_BACKLOG_OPTION_ID"; do
   test -n "$ig_required_id"; test "$ig_required_id" != 'null'
 done
-ig_fields_record="$(uv run --locked python - "$IG_PRIORITY_FIELD_ID" "$IG_STATUS_FIELD_ID" "$IG_ESTIMATE_FIELD_ID" "$IG_MUST_OPTION_ID" "$IG_BACKLOG_OPTION_ID" <<'PY'
+ig_fields_record="$(uv run --locked python - "$IG_PRIORITY_FIELD_ID" "$IG_STATUS_FIELD_ID" "$IG_ESTIMATE_FIELD_ID" "$IG_PARENT_FIELD_ID" "$IG_SUB_ISSUE_PROGRESS_FIELD_ID" "$IG_MUST_OPTION_ID" "$IG_BACKLOG_OPTION_ID" <<'PY'
 import json,sys
 print(json.dumps({
- "Priority":{"id":sys.argv[1],"options":{"MUST":sys.argv[4]}},
- "Status":{"id":sys.argv[2],"options":{"Backlog":sys.argv[5]}},
- "Estimate":{"id":sys.argv[3],"unit":"hours"},"verified":True,
+ "Priority":{"id":sys.argv[1],"options":{"MUST":sys.argv[6]}},
+ "Status":{"id":sys.argv[2],"options":{"Backlog":sys.argv[7]}},
+ "Estimate":{"id":sys.argv[3],"unit":"hours"},
+ "Parent issue":{"id":sys.argv[4],"type":"built-in-hierarchy"},
+ "Sub-issue progress":{"id":sys.argv[5],"type":"built-in-progress"},
+ "verified":True,
 },separators=(",",":")))
 PY
 )"
@@ -1851,133 +2210,388 @@ done < <(ig_manifest_stream project-items)
 test "$ig_populated_count" -eq 32
 ```
 
-## 15. Project views — REMOTE WRITE or explicit manual Gate D stop
+## 15. Hybrid Project views — manual Gate D boundary and UI verification
 
-GitHub's documented REST create-view operation accepts `name`, `layout`,
-`filter`, and optional visible field REST IDs. It does not currently express
-all approved grouping and multi-field sorting settings. Consequently, the
-automated path must stop before creating partial views unless a capability
-probe proves every manifest property can be applied and read back.
+The approved views require grouping and multi-field sorting that the available
+CLI/API cannot fully configure and read back. The automated Gate D phase must
+therefore finish the 15 labels, 32 issues, 31 relationships, 32 Project items,
+five managed fields, and all Priority/Estimate/Backlog values, record three
+pending view lifecycles, and stop without calling a view-mutation API or
+finalizing execution state.
 
-Exact supported request templates are:
+### 15.1 Automated boundary — LOCAL WRITE only, then planned stop
+
+This block verifies the automated inventory, preserves a default-view record
+captured in section 8, creates pending records for the other manual views, and
+exits with status 20. Status 20 is the documented manual-action boundary, not
+a successful Gate D completion and not a remote-mutation failure.
 
 ```bash
-if test "$IG_OWNER_TYPE" = 'Organization'; then
-  ig_views_endpoint="orgs/${IG_OWNER}/projectsV2/${IG_PROJECT_NUMBER}/views"
-else
-  ig_views_endpoint="users/${IG_OWNER_ID}/projectsV2/${IG_PROJECT_NUMBER}/views"
-fi
-
-# Supported create template; run only after a successful full-capability probe.
-ig_create_view_request() {
-  local view_name="$1" view_layout="$2" view_filter="$3"
-  gh api --method POST -H "X-GitHub-Api-Version: ${IG_API_VERSION}" "$ig_views_endpoint" \
-    -f name="$view_name" -f layout="$view_layout" -f filter="$view_filter"
-}
-
-# Supported list/read-back template.
-ig_read_views_request() {
-  gh api -H "X-GitHub-Api-Version: ${IG_API_VERSION}" "$ig_views_endpoint"
-}
-
-ig_record_manual_view() {
-  local view_name="$1" view_layout="$2" view_filter="$3" api_result="$4" error_classification="$5"
-  local view_record
-  view_record="$(uv run --locked python - "$view_name" "$view_layout" "$view_filter" "$api_result" "$error_classification" <<'PY'
+uv run --locked python - "$IG_STATE_FILE" <<'PY'
 import json,sys
+from pathlib import Path
+s=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected={"labels":15,"issues":32,"hierarchy":31,"project_items":32}
+for section,count in expected.items():
+    if len(s[section])!=count or any(record.get("verified") is not True for record in s[section].values()):
+        raise SystemExit(f"automated Gate D inventory is incomplete: {section}")
+if not s.get("project",{}).get("verified") or not s.get("fields",{}).get("verified"):
+    raise SystemExit("Project or field evidence is incomplete")
+for record in s["project_items"].values():
+    if set(record.get("values",{}))!={"Priority","Estimate","Status"}:
+        raise SystemExit("Project item field values are incomplete")
+PY
+
+# Re-read the view set before creating any manual-pending record. At this
+# boundary the only permitted remote view is the state-owned default-view side
+# effect captured in section 8. Any other remote view is unowned and requires
+# a separate, identity-specific adoption decision.
+ig_read_views_request > "$IG_VIEWS_JSON_FILE"
+uv run --locked python - "$IG_STATE_FILE" "$IG_VIEWS_JSON_FILE" <<'PY'
+import json,sys
+from pathlib import Path
+state=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+payload=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+rows=payload.get("views",payload if isinstance(payload,list) else [])
+if not isinstance(rows,list): raise SystemExit("Project view listing has an unsupported shape")
+remote_ids={str(row.get("id") or row.get("node_id") or "") for row in rows}
+if "" in remote_ids or len(remote_ids)!=len(rows): raise SystemExit("remote Project view identities are missing or duplicated")
+owned_ids={
+    str(record["remote_view_id"])
+    for record in state["views"].values()
+    if record.get("source")=="project-creation-side-effect" and record.get("remote_view_id")
+}
+if remote_ids!=owned_ids:
+    raise SystemExit("ADOPTION REQUIRED: remote Project view set contains an unrecorded resource")
+PY
+
+while IFS= read -r -d '' ig_view_row; do
+  ig_view_name="$(uv run --locked python -c 'import json,sys; print(json.loads(sys.argv[1])["name"])' "$ig_view_row")"
+  ig_existing_view_state="$(ig_state_entry views "$ig_view_name")"
+  if test -n "$ig_existing_view_state"; then
+    uv run --locked python - "$ig_existing_view_state" "$ig_view_name" <<'PY'
+import json,sys
+d=json.loads(sys.argv[1])
+if d.get("manifest_identifier")!=sys.argv[2] or d.get("view_name")!=sys.argv[2]:
+    raise SystemExit("existing view state identity mismatch")
+if d.get("verified") is not True and d.get("status")!="manual-pending":
+    raise SystemExit("existing view state is neither pending nor verified")
+PY
+    continue
+  fi
+  ig_pending_view_record="$(uv run --locked python - "$ig_view_row" "$IG_PROJECT_ID" "$IG_PROJECT_URL" <<'PY'
+import json,sys
+from datetime import datetime,timezone
+view=json.loads(sys.argv[1])
+directions={
+    "MVP Board":["field-option-order","ascending"],
+    "Full Backlog":["field-option-order","ascending","ascending"],
+    "Umbrella Progress":["ascending"],
+}
+expected={
+    "name":view["name"], "layout":view["layout"],
+    "filter":"no-active-filter" if view["name"]=="Full Backlog" else view["filter"],
+    "columns":view.get("columns",[]), "group_by":view.get("group_by"),
+    "sort":view.get("sort",[]), "sort_directions":directions[view["name"]],
+}
 print(json.dumps({
- "requested_name":sys.argv[1],"requested_layout":sys.argv[2],"requested_filter":sys.argv[3],
- "api_result":sys.argv[4],"id":None,"verified":False,"manual_required":True,
- "error_classification":sys.argv[5],
-},separators=(",",":")))
+    "resource_type":"project-view", "manifest_identifier":view["name"],
+    "view_name":view["name"], "project_id":sys.argv[2], "project_url":sys.argv[3],
+    "remote_view_id":None, "remote_view_url":None, "source":"manual-ui-required",
+    "expected_properties":expected,
+    "status":"manual-pending", "verified":False, "manual_required":True,
+    "recorded_at":datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z"),
+},ensure_ascii=False,sort_keys=True,separators=(",",":")))
 PY
 )"
-  ig_state view "$view_name" "$view_record"
-}
+  ig_state manual-view-pending "$ig_view_name" "$ig_pending_view_record"
+done < <(ig_manifest_stream views)
 
-# Call only when a capability probe has proved every requested property can be
-# applied. A failed request is recorded and stops; a 401/403 is never retried.
-ig_verify_supported_view_result() {
-  local result_file="$1" view_name="$2" view_layout="$3" view_filter="$4" verified_file="$5"
-  ig_read_views_request > "$IG_VIEWS_JSON_FILE"
-  uv run --locked python - "$result_file" "$IG_VIEWS_JSON_FILE" "$view_name" "$view_layout" "$view_filter" "$verified_file" <<'PY'
-import json,sys
-from pathlib import Path
-created=json.loads(Path(sys.argv[1]).read_text()); listing=json.loads(Path(sys.argv[2]).read_text())
-views=listing.get("views",listing if isinstance(listing,list) else [])
-record={"id":created.get("id"),"node_id":created.get("node_id"),"number":created.get("number"),"url":created.get("html_url")}
-if not all(value is not None for value in record.values()): raise SystemExit("view creation returned incomplete identifiers")
-matches=[row for row in views if str(row.get("id"))==str(record["id"]) and row.get("name")==sys.argv[3] and row.get("layout")==sys.argv[4] and (row.get("filter") or "")==sys.argv[5]]
-if len(matches)!=1: raise SystemExit("view read-back mismatch")
-Path(sys.argv[6]).write_text(json.dumps(record,separators=(",",":")),encoding="utf-8")
-PY
-}
+test "$(uv run --locked python -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["views"]))' "$IG_STATE_FILE")" -eq 3
+printf '%s\n' \
+  'MANUAL ACTION REQUIRED; Gate D remains unfinalized:' \
+  '1. Rename/configure the recorded default view as MVP Board, or create MVP Board when no default was recorded.' \
+  '2. Configure MVP Board exactly as specified in docs/backlog/PROJECT_CONFIGURATION.md.' \
+  '3. Create and configure Full Backlog exactly as specified there.' \
+  '4. Create and configure Umbrella Progress exactly as specified there.' \
+  '5. Preserve exactly those three views; do not leave a fourth view.' \
+  '6. Verify every required layout, filter, column, grouping, and complete sort order.' \
+  '7. Record this attestation:' \
+  'I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md.' \
+  '8. Request authenticated read-only UI inspection; screenshots alone are insufficient.'
+exit 20
+```
 
-ig_create_and_verify_supported_view() {
-  local view_name="$1" view_layout="$2" view_filter="$3"
-  local operation="15-view-${view_name}" result_file="${IG_TEMP_DIR}/view-create-result.json" verified_file="${IG_TEMP_DIR}/view-verified.json"
-  local -a view_ids
-  if ! ig_run_mutation "$operation" ig_create_view_request "$view_name" "$view_layout" "$view_filter"; then
-    ig_record_manual_view "$view_name" "$view_layout" "$view_filter" 'failed' 'api_auth_or_capability_failure'
-    return 1
-  fi
-  cp "$IG_MUTATION_STDOUT" "$result_file"
-  if ! ig_verify_operation "$operation" ig_verify_supported_view_result "$result_file" "$view_name" "$view_layout" "$view_filter" "$verified_file"; then
-    ig_record_manual_view "$view_name" "$view_layout" "$view_filter" 'created_but_unverified' 'readback_or_configuration_failure'
-    return 1
-  fi
-  mapfile -d '' -t view_ids < <(uv run --locked python - "$verified_file" <<'PY'
+### 15.2 User-owned manual configuration — REMOTE WRITE, Gate D
+
+Only the user performs these UI mutations:
+
+1. Open the recorded Project URL.
+2. If section 8 recorded an implicit default view, rename and configure that
+   exact view as **MVP Board**. If none was recorded, create **MVP Board**.
+3. Configure **MVP Board** as a board filtered by `Priority:MUST`, grouped by
+   Status, sorted first by Priority in field-option order and then by Estimate
+   ascending.
+4. Create **Full Backlog** as a table with no active filter, the exact columns
+   Status, Priority, Parent issue, Estimate, Labels, and the sort sequence
+   Priority option order, Parent issue ascending, Title ascending.
+5. Create **Umbrella Progress** as a table filtered semantically by the exact
+   `type:umbrella` label, with Status, Priority, Estimate, Sub-issue progress,
+   sorted by Title ascending. Quoted or UI-normalized filter syntax is allowed
+   only when it selects that exact label.
+6. Preserve exactly these three views. Do not create a fourth view and do not
+   delete or replace the recorded default view.
+7. Supply this exact attestation:
+
+   `I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md.`
+
+The manual UI work is not completed evidence. It must be followed by a
+separate authenticated, read-only UI inspection.
+
+### 15.3 Authenticated read-only UI inspection and evidence import
+
+The inspector must use the active `w7-mgfcode` account, open the recorded
+Project and all three views, and observe the Project identity, exact view set,
+names, layout, filter semantics, required visible fields or columns, grouping,
+and complete sort order. Screenshots are optional supplements. They do not
+replace the live UI inspection and may never be the sole basis for
+`verified=true`.
+
+The read-only inspector writes its observations to the task-specific temporary
+file `$IG_UI_EVIDENCE_FILE`. The file is not execution state. Its exact shape
+is:
+
+```json
+{
+  "authenticated_account": "w7-mgfcode",
+  "project_id": "<recorded Project node ID>",
+  "project_url": "<recorded Project URL>",
+  "verification_method": "authenticated-github-ui",
+  "verification_timestamp": "<ISO-8601 UTC timestamp ending in Z>",
+  "inspection_reference": "<non-empty UI inspection reference>",
+  "attestation_reference": "I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md.",
+  "screenshot_only": false,
+  "views": [
+    {
+      "name": "<exact manifest view name>",
+      "remote_view_id": "<observed unique view ID>",
+      "remote_view_url": "<observed view URL>",
+      "observed_properties": {},
+      "checks": {},
+      "screenshots": []
+    }
+  ]
+}
+```
+
+`observed_properties` is an object, not a string. `checks` is an object with
+the eleven Boolean keys generated below. Each screenshot entry, when present,
+contains a non-sensitive `description` and lowercase SHA-256. The import block
+validates the entire evidence document and emits three safely delimited state
+records before atomically storing them through `manual-view-verified`:
+
+```bash
+test "$(gh api user --jq .login)" = "$IG_OWNER"
+test -f "$IG_UI_EVIDENCE_FILE"
+ig_read_views_request > "$IG_VIEWS_JSON_FILE"
+mapfile -d '' -t ig_verified_view_rows < <(
+  uv run --locked python - "$IG_MANIFEST_FILE" "$IG_STATE_FILE" "$IG_UI_EVIDENCE_FILE" "$IG_VIEWS_JSON_FILE" <<'PY'
 import json,sys
+from datetime import datetime
 from pathlib import Path
-d=json.loads(Path(sys.argv[1]).read_text())
-for key in ("id","node_id","number","url"): sys.stdout.buffer.write(str(d[key]).encode()+b"\0")
+
+manifest=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+state=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+evidence=json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+remote_payload=json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+remote_views=remote_payload.get("views",remote_payload if isinstance(remote_payload,list) else [])
+owner=manifest["repository"]["owner"]
+project=state["project"]
+attestation="I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md."
+if evidence.get("authenticated_account")!=owner or evidence.get("verification_method")!="authenticated-github-ui":
+    raise SystemExit("authenticated UI identity mismatch")
+if evidence.get("project_id")!=project.get("id") or evidence.get("project_url")!=project.get("url"):
+    raise SystemExit("UI evidence Project identity mismatch")
+if evidence.get("attestation_reference")!=attestation or evidence.get("screenshot_only") is not False:
+    raise SystemExit("UI evidence lacks exact attestation or is screenshot-only")
+timestamp=evidence.get("verification_timestamp")
+try:
+    parsed=datetime.fromisoformat(timestamp.replace("Z","+00:00"))
+except (AttributeError,ValueError) as exc:
+    raise SystemExit("UI evidence timestamp is invalid") from exc
+if not timestamp.endswith("Z") or parsed.tzinfo is None or not evidence.get("inspection_reference"):
+    raise SystemExit("UI evidence timestamp or inspection reference is incomplete")
+
+directions={
+    "MVP Board":["field-option-order","ascending"],
+    "Full Backlog":["field-option-order","ascending","ascending"],
+    "Umbrella Progress":["ascending"],
+}
+def normalize_filter(name, value):
+    if name=="Full Backlog" and value in (None,"","all real issues","no-active-filter"):
+        return "no-active-filter"
+    if name=="Umbrella Progress":
+        compact="".join(str(value).split())
+        if compact in {"label:type:umbrella",'label:"type:umbrella"',"label:'type:umbrella'"}:
+            return "label:type:umbrella"
+    return value
+
+expected={}
+for view in manifest["project"]["views"]:
+    expected[view["name"]]={
+        "name":view["name"], "layout":view["layout"],
+        "filter":"no-active-filter" if view["name"]=="Full Backlog" else view["filter"],
+        "columns":view.get("columns",[]), "group_by":view.get("group_by"),
+        "sort":view.get("sort",[]), "sort_directions":directions[view["name"]],
+    }
+rows=evidence.get("views")
+if not isinstance(rows,list) or len(rows)!=3 or {row.get("name") for row in rows}!=set(expected):
+    raise SystemExit("UI evidence must contain exactly the three manifest views")
+ids=[row.get("remote_view_id") for row in rows]; urls=[row.get("remote_view_url") for row in rows]
+if any(not value for value in ids+urls) or len(set(ids))!=3 or len(set(urls))!=3:
+    raise SystemExit("UI evidence view identities are missing or duplicated")
+remote_ids={str(row.get("id") or row.get("node_id") or "") for row in remote_views}
+remote_names={row.get("name") for row in remote_views}
+if len(remote_views)!=3 or remote_ids!=set(ids) or remote_names!=set(expected):
+    raise SystemExit("remote Project view set differs from authenticated UI evidence")
+remote_by_id={str(row.get("id") or row.get("node_id") or ""):row for row in remote_views}
+check_names={
+    "authenticated_account_verified", "project_identity_verified",
+    "view_identity_verified", "name_verified", "layout_verified",
+    "filter_verified", "visible_fields_verified", "group_by_verified",
+    "sort_verified", "exact_view_set_verified", "inspection_completed",
+}
+for row in rows:
+    name=row["name"]; checks=row.get("checks")
+    remote_row=remote_by_id[row["remote_view_id"]]
+    remote_url=str(remote_row.get("html_url") or remote_row.get("url") or "")
+    if not remote_url or remote_url!=row["remote_view_url"]:
+        raise SystemExit(f"remote view URL differs from UI evidence: {name}")
+    observed=row.get("observed_properties")
+    if not isinstance(observed,dict):
+        raise SystemExit(f"UI-observed view properties are not an object: {name}")
+    observed={**observed,"filter":normalize_filter(name,observed.get("filter"))}
+    if observed!=expected[name]:
+        raise SystemExit(f"UI-observed view properties mismatch: {name}")
+    if not isinstance(checks,dict) or set(checks)!=check_names or any(checks[key] is not True for key in check_names):
+        raise SystemExit(f"UI checks are incomplete: {name}")
+    screenshots=row.get("screenshots",[])
+    if not isinstance(screenshots,list) or any(
+        not isinstance(item,dict) or not item.get("description") or
+        len(item.get("sha256", ""))!=64 or any(ch not in "0123456789abcdef" for ch in item["sha256"])
+        for item in screenshots
+    ):
+        raise SystemExit(f"optional screenshot metadata is invalid: {name}")
+    pending=state["views"].get(name)
+    if not isinstance(pending,dict) or pending.get("status")!="manual-pending":
+        raise SystemExit(f"view lacks pending lifecycle evidence: {name}")
+    source="project-default-manually-configured" if pending.get("source")=="project-creation-side-effect" else "manual-ui-created"
+    if pending.get("remote_view_id") and pending["remote_view_id"]!=row["remote_view_id"]:
+        raise SystemExit("recorded default view identity changed")
+    record={
+        "resource_type":"project-view", "manifest_identifier":name,
+        "view_name":name, "remote_view_id":row["remote_view_id"],
+        "remote_view_url":row["remote_view_url"], "project_id":project["id"],
+        "project_url":project["url"], "source":source,
+        "expected_properties":expected[name], "observed_properties":observed,
+        "verification_method":"authenticated-github-ui", "verified_by":owner,
+        "verification_timestamp":timestamp, "attestation_reference":attestation,
+        "verified":True, "manual_required":False,
+        "ui_evidence":{**checks,"screenshot_only":False,"inspection_reference":evidence["inspection_reference"]},
+        "screenshot_evidence":screenshots,
+    }
+    sys.stdout.buffer.write(json.dumps({"name":name,"record":record},ensure_ascii=False,sort_keys=True,separators=(",",":")).encode()+b"\0")
 PY
 )
-  test "${#view_ids[@]}" -eq 4
-  local view_record
-  view_record="$(uv run --locked python - "$view_name" "$view_layout" "$view_filter" "${view_ids[0]}" "${view_ids[1]}" "${view_ids[2]}" "${view_ids[3]}" <<'PY'
-import json,sys
-print(json.dumps({"requested_name":sys.argv[1],"requested_layout":sys.argv[2],"requested_filter":sys.argv[3],"api_result":"created","id":sys.argv[4],"node_id":sys.argv[5],"number":int(sys.argv[6]),"url":sys.argv[7],"verified":True,"manual_required":False,"error_classification":None},separators=(",",":")))
-PY
-)"
-  ig_state view "$view_name" "$view_record"
-}
+test "${#ig_verified_view_rows[@]}" -eq 3
+for ig_verified_view_row in "${ig_verified_view_rows[@]}"; do
+  mapfile -d '' -t ig_verified_view_values < <(ig_json_fields "$ig_verified_view_row" name record)
+  ig_state manual-view-verified "${ig_verified_view_values[0]}" "${ig_verified_view_values[1]}"
+done
+ig_state verified '15-authenticated-ui-view-verification'
 ```
 
-For the currently approved manifest, record the unsupported configuration and
-stop automated view mutation without invoking `ig_create_view_request`:
+If the authenticated inspection fails, stop without changing remote views.
+Record a sanitized local failure if appropriate, let the user correct the UI
+manually, then rerun the complete read-only inspection. Never automatically
+edit, delete, recreate, or silently adopt a view.
+
+### 15.4 Static lifecycle scenarios — READ-ONLY
+
+This standard-library-only simulation exercises the ten required view
+lifecycle outcomes without reading GitHub or the real execution-state file:
 
 ```bash
-while IFS= read -r -d '' ig_view_row; do
-  mapfile -d '' -t ig_view_values < <(ig_json_fields "$ig_view_row" name layout filter)
-  ig_view_name="${ig_view_values[0]}"; ig_view_layout="${ig_view_values[1]}"; ig_view_filter="${ig_view_values[2]}"
-  ig_record_manual_view "$ig_view_name" "$ig_view_layout" "$ig_view_filter" 'not_attempted' 'unsupported_configuration'
-done < <(ig_manifest_stream views)
-ig_state verified '15-views-manual-boundary-recorded'
+uv run --locked python - <<'PY'
+from copy import deepcopy
+
+names={"MVP Board","Full Backlog","Umbrella Progress"}
+attestation="I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md."
+expected={
+    "MVP Board":{"name":"MVP Board","layout":"board","filter":"Priority:MUST","columns":[],"group_by":"Status","sort":["Priority","Estimate"],"sort_directions":["field-option-order","ascending"]},
+    "Full Backlog":{"name":"Full Backlog","layout":"table","filter":"no-active-filter","columns":["Status","Priority","Parent issue","Estimate","Labels"],"group_by":None,"sort":["Priority","Parent issue","Title"],"sort_directions":["field-option-order","ascending","ascending"]},
+    "Umbrella Progress":{"name":"Umbrella Progress","layout":"table","filter":"label:type:umbrella","columns":["Status","Priority","Estimate","Sub-issue progress"],"group_by":None,"sort":["Title"],"sort_directions":["ascending"]},
+}
+
+def capture_default(rows):
+    if len(rows)>1: raise ValueError("multiple unexpected default views")
+    return None if not rows else {"manifest_identifier":"MVP Board","remote_view_id":rows[0],"source":"project-creation-side-effect","status":"manual-pending"}
+
+def complete_record(name, remote_id):
+    properties=deepcopy(expected[name])
+    return {
+        "manifest_identifier":name,"remote_view_id":remote_id,
+        "expected_properties":deepcopy(properties),
+        "observed_properties":deepcopy(properties),
+        "verified":True,"manual_required":False,
+        "verification_method":"authenticated-github-ui",
+        "attestation_reference":attestation,
+        "ui_evidence":{"inspection_completed":True,"screenshot_only":False},
+    }
+
+def finalizable(records):
+    if set(records)!=names or len(records)!=3: return False
+    ids=[]
+    for name,record in records.items():
+        ids.append(record.get("remote_view_id"))
+        if record.get("manifest_identifier")!=name: return False
+        if record.get("verified") is not True or record.get("manual_required") is not False: return False
+        if record.get("expected_properties")!=record.get("observed_properties"): return False
+        if record.get("verification_method")!="authenticated-github-ui": return False
+        if record.get("attestation_reference")!=attestation: return False
+        evidence=record.get("ui_evidence",{})
+        if evidence.get("inspection_completed") is not True or evidence.get("screenshot_only") is not False: return False
+    return all(ids) and len(set(ids))==3
+
+results=[]
+results.append(capture_default(["V1"])["manifest_identifier"]=="MVP Board")
+try: capture_default(["V1","V2"])
+except ValueError: results.append(True)
+else: results.append(False)
+valid={name:complete_record(name,f"V{index}") for index,name in enumerate(sorted(names),1)}
+results.append(finalizable(valid))
+results.append(not finalizable({key:value for key,value in valid.items() if key!="Full Backlog"}))
+unexpected=complete_record("MVP Board","V4"); unexpected["manifest_identifier"]="Unexpected"
+results.append(not finalizable({**valid,"Unexpected":unexpected}))
+mismatch_results=[]
+for field in ("group_by","sort","filter","layout","columns"):
+    mismatch=deepcopy(valid)
+    mismatch["MVP Board"]["observed_properties"][field]="wrong"
+    mismatch_results.append(not finalizable(mismatch))
+results.append(all(mismatch_results))
+screenshot_only=deepcopy(valid); screenshot_only["MVP Board"]["ui_evidence"]={"inspection_completed":False,"screenshot_only":True}
+results.append(not finalizable(screenshot_only))
+manual_required=deepcopy(valid); manual_required["MVP Board"]["manual_required"]=True
+results.append(not finalizable(manual_required))
+missing_attestation=deepcopy(valid); missing_attestation["MVP Board"]["attestation_reference"]=""
+results.append(not finalizable(missing_attestation))
+before={"attempt_history":[1,2],"failure_history":[3],"adoption_history":[],"views":{}}
+after=deepcopy(before); after["views"]=deepcopy(valid)
+results.append(after["attempt_history"]==before["attempt_history"] and after["failure_history"]==before["failure_history"] and after["adoption_history"]==before["adoption_history"] and finalizable(after["views"]))
+if results!=[True]*10: raise SystemExit(f"view lifecycle scenarios failed: {results}")
+print("view_lifecycle_scenarios=10/10")
+PY
 ```
-
-If a future capability probe demonstrates full support, call
-`ig_run_mutation` with `ig_create_view_request`, parse the returned `id`,
-`number`, `node_id`, and `html_url`, call `ig_read_views_request`, require one
-exact read-back, and store those identifiers with `verified=true` and
-`manual_required=false`. On 401, 403, or an unsupported property, record
-`api_result`, `id=null` when none was returned, `verified=false`,
-`manual_required=true`, and an error classification, then stop automated view
-configuration while preserving verified resources.
-
-Manual Gate D steps are exact:
-
-1. Run `gh project view "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --web`.
-2. Configure **MVP Board** as board, filter `Priority:MUST`, group by Status,
-   sort by Priority then Estimate.
-3. Configure **Full Backlog** as table showing Status, Priority, Parent issue,
-   Estimate, Labels; sort by Priority, Parent issue, Title.
-4. Configure **Umbrella Progress** as table filtered by
-   `label:type:umbrella`, showing Status, Priority, Estimate, Sub-issue
-   progress; sort by Title.
-5. Save and read back exactly three views. Update each state record only after
-   its complete configuration is verified; a manual instruction is never
-   automatically marked complete.
 
 ## 16. Exact final read-only verification
 
@@ -2002,7 +2616,7 @@ test "$(uv run --locked python -c 'import json,sys; print(sum(row["title"]==sys.
 ig_fetch_project_link > "${IG_TEMP_DIR}/verify-project-link.json"
 gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
 ig_fetch_project_items > "$IG_ITEMS_JSON_FILE"
-ig_read_views_request > "$IG_VIEWS_JSON_FILE" || true
+ig_read_views_request > "$IG_VIEWS_JSON_FILE"
 : > "${IG_TEMP_DIR}/verify-relationships.jsonl"
 while IFS= read -r -d '' ig_relationship_row; do
   mapfile -d '' -t ig_relationship_values < <(ig_json_fields "$ig_relationship_row" key child)
@@ -2020,6 +2634,7 @@ uv run --locked python - \
   "$IG_VIEWS_JSON_FILE" <<'PY'
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 manifest=json.loads(Path(sys.argv[1]).read_text()); state=json.loads(Path(sys.argv[2]).read_text())
@@ -2109,7 +2724,11 @@ if link_state.get("expected_properties")!=expected_link_properties or link_state
     raise SystemExit("managed repository-Project link state properties mismatch")
 if link_state["source"]=="adopted" and (not link_state.get("approval_reference") or not link_state.get("approval_timestamp")):
     raise SystemExit("adopted repository-Project link lacks resource-specific approval")
-for name,key in (("Priority","Priority"),("Status","Status"),("Estimate","Estimate")):
+for name,key in (
+    ("Priority","Priority"), ("Status","Status"), ("Estimate","Estimate"),
+    ("Parent issue","Parent issue"),
+    ("Sub-issue progress","Sub-issue progress"),
+):
     remote=[row for row in fields if row.get("name")==name]
     if len(remote)!=1 or remote[0].get("id")!=state["fields"][key]["id"]: raise SystemExit(f"field mismatch: {name}")
 remote_priority=next(row for row in fields if row.get("name")=="Priority")
@@ -2142,15 +2761,83 @@ for (parent,child),payload in zip(edges,relationship_lines,strict=True):
     actual_parent=payload["data"]["node"].get("parent")
     if not actual_parent or actual_parent["id"]!=state["issues"][parent]["id"]: raise SystemExit(f"relationship mismatch: {parent}->{child}")
 
-if len(state["views"])!=3: raise SystemExit("view state count mismatch")
+directions={
+    "MVP Board":["field-option-order","ascending"],
+    "Full Backlog":["field-option-order","ascending","ascending"],
+    "Umbrella Progress":["ascending"],
+}
+expected_views={}
 for view in manifest["project"]["views"]:
-    record=state["views"].get(view["name"])
-    if not record or not (record.get("verified") is True or record.get("manual_required") is True): raise SystemExit(f"view status incomplete: {view['name']}")
-    if record.get("verified"):
-        if views_payload is None: raise SystemExit("verified views lack remote read-back")
-        remote_views=views_payload.get("views",views_payload if isinstance(views_payload,list) else [])
-        matches=[row for row in remote_views if row.get("name")==view["name"] and str(row.get("id"))==str(record.get("id")) and row.get("layout")==view["layout"] and (row.get("filter") or "")==view["filter"]]
-        if len(matches)!=1: raise SystemExit(f"verified view read-back mismatch: {view['name']}")
+    expected_views[view["name"]]={
+        "name":view["name"], "layout":view["layout"],
+        "filter":"no-active-filter" if view["name"]=="Full Backlog" else view["filter"],
+        "columns":view.get("columns",[]), "group_by":view.get("group_by"),
+        "sort":view.get("sort",[]), "sort_directions":directions[view["name"]],
+    }
+if len(expected_views)!=3 or set(state["views"])!=set(expected_views):
+    raise SystemExit("view state does not exactly match the three manifest views")
+if views_payload is None:
+    raise SystemExit("verified views lack remote read-back")
+remote_views=views_payload.get("views",views_payload if isinstance(views_payload,list) else [])
+if not isinstance(remote_views,list) or len(remote_views)!=3:
+    raise SystemExit("remote Project must contain exactly three views")
+remote_ids=[str(row.get("id") or row.get("node_id") or "") for row in remote_views]
+remote_names=[row.get("name") for row in remote_views]
+if any(not value for value in remote_ids) or len(set(remote_ids))!=3 or set(remote_names)!=set(expected_views):
+    raise SystemExit("remote view names or IDs are missing, duplicated, or unexpected")
+remote_by_id={str(row.get("id") or row.get("node_id") or ""):row for row in remote_views}
+attestation="I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md."
+required_checks={
+    "authenticated_account_verified", "project_identity_verified",
+    "view_identity_verified", "name_verified", "layout_verified",
+    "filter_verified", "visible_fields_verified", "group_by_verified",
+    "sort_verified", "exact_view_set_verified", "inspection_completed",
+}
+verified_ids=[]
+for name,expected in expected_views.items():
+    record=state["views"][name]
+    mandatory={
+        "resource_type","manifest_identifier","view_name","remote_view_id",
+        "remote_view_url","project_id","project_url","source",
+        "expected_properties","observed_properties","verification_method",
+        "verified_by","verification_timestamp","attestation_reference",
+        "verified","manual_required","ui_evidence","screenshot_evidence",
+    }
+    if mandatory-record.keys(): raise SystemExit(f"incomplete view state: {name}")
+    if record["resource_type"]!="project-view" or record["manifest_identifier"]!=name or record["view_name"]!=name:
+        raise SystemExit(f"view state identity mismatch: {name}")
+    if record["source"] not in {"project-default-manually-configured","manual-ui-created"}:
+        raise SystemExit(f"view source mismatch: {name}")
+    if record["project_id"]!=state["project"]["id"] or record["project_url"]!=state["project"]["url"]:
+        raise SystemExit(f"view Project identity mismatch: {name}")
+    if record["expected_properties"]!=expected or record["observed_properties"]!=expected:
+        raise SystemExit(f"view properties mismatch: {name}")
+    if record["verification_method"]!="authenticated-github-ui" or record["verified_by"]!=manifest["repository"]["owner"]:
+        raise SystemExit(f"view lacks authenticated UI verification: {name}")
+    try:
+        verified_at=datetime.fromisoformat(record["verification_timestamp"].replace("Z","+00:00"))
+    except (AttributeError,ValueError) as exc:
+        raise SystemExit(f"view verification timestamp is invalid: {name}") from exc
+    if not record["verification_timestamp"].endswith("Z") or verified_at.tzinfo is None:
+        raise SystemExit(f"view verification timestamp is not UTC: {name}")
+    if record["attestation_reference"]!=attestation or record["verified"] is not True or record["manual_required"] is not False:
+        raise SystemExit(f"view attestation or completion state mismatch: {name}")
+    evidence=record["ui_evidence"]
+    if not isinstance(evidence,dict) or required_checks-evidence.keys() or any(evidence[key] is not True for key in required_checks):
+        raise SystemExit(f"view UI evidence is incomplete: {name}")
+    if evidence.get("screenshot_only") is not False or not evidence.get("inspection_reference"):
+        raise SystemExit(f"screenshot-only view evidence is forbidden: {name}")
+    screenshots=record["screenshot_evidence"]
+    if not isinstance(screenshots,list): raise SystemExit(f"invalid screenshot metadata: {name}")
+    if remote_ids.count(record["remote_view_id"])!=1 or remote_names.count(name)!=1:
+        raise SystemExit(f"remote view identity mismatch: {name}")
+    remote_row=remote_by_id[record["remote_view_id"]]
+    remote_url=str(remote_row.get("html_url") or remote_row.get("url") or "")
+    if not remote_url or remote_url!=record["remote_view_url"]:
+        raise SystemExit(f"remote view URL mismatch: {name}")
+    verified_ids.append(record["remote_view_id"])
+if len(set(verified_ids))!=3 or set(verified_ids)!=set(remote_ids):
+    raise SystemExit("manifest/state/remote verified-view sets differ")
 
 expected_state_counts={"labels":15,"issues":32,"hierarchy":31,"project_items":32,"views":3}
 for section,count in expected_state_counts.items():
@@ -2192,8 +2879,11 @@ PY
 ```
 
 Finalization stops if any collection is incomplete, any managed record is
-unverified, any view lacks either verification or `manual_required=true`, a
-failure remains current, or the manifest checksum changed.
+unverified, any view is pending or `manual_required=true`, authenticated UI
+evidence or the exact attestation is missing, the three view names or remote
+IDs are not unique, expected and observed view properties differ, a failure
+remains current, or the manifest checksum changed. Screenshot evidence alone
+never satisfies the view gate.
 
 ## 18. Partial failure and exact resume protocol
 
@@ -2243,6 +2933,30 @@ For an adoption stop, resume in this exact order:
 9. Restart the original label loop or section 8.
 10. Reverify every earlier state-owned resource before the next mutation.
 
+For the manual-view boundary or a failed UI inspection, resume additively in
+this exact order:
+
+1. Parse execution state and require schema version 1.
+2. Recalculate the immutable manifest and execution-state checksums; stop on
+   either mismatch.
+3. Read back every previously recorded label, Project identity/link, field,
+   issue, hierarchy relationship, Project item, and populated value.
+4. Require exactly three pending or verified view keys matching the manifest.
+5. If any remote view identity or configuration differs, stop. The user—not
+   automation—must correct the GitHub UI under current Gate D approval.
+6. Repeat the complete authenticated, read-only UI inspection from section
+   15.3. Screenshots alone are not a retry mechanism.
+7. Atomically replace only pending view records whose live UI inspection fully
+   passes with `manual-view-verified`; preserve all attempt, failure, adoption,
+   repository, and earlier Gate D evidence.
+8. Run the complete manifest/state/remote read-back from section 16.
+9. Finalize only after all three view records are verified, not manual-required,
+   uniquely identified, and exact-property matches.
+
+Never automatically edit, delete, recreate, or replace a view during recovery.
+An unrecorded remote view still requires explicit resource-specific adoption;
+manual creation approval does not silently adopt a pre-existing resource.
+
 Never recreate a verified resource, use force as normal recovery, delete a
 resource, change credentials silently, or adopt an unrecorded match without
 resource-specific approval. The `failure_history` and `adoption_history`
@@ -2256,12 +2970,15 @@ a successful read-back clears only the current `failed_operation` and `error`.
 | 1–2 | Prerequisites, scopes, variables, manifest validation | READ-ONLY | C/D preflight |
 | 3–5 | State initialization and atomic helpers | LOCAL WRITE | C/D evidence |
 | 6 | Repository creation, separate push, metadata/topics | LOCAL + REMOTE WRITE | C |
+| 8 | Create/link Project and capture its default-view side effect | REMOTE WRITE | D |
 | 7 | Reconcile and record 15 labels | REMOTE WRITE | D |
-| 8–9 | Create/link Project; create/extract fields and options | REMOTE WRITE | D |
+| 9 | Create/extract all five Project fields and required options | REMOTE WRITE | D |
 | 10–11 | Create/record master, 8 umbrellas, 23 children | REMOTE WRITE | D |
 | 12 | Apply and verify 31 hierarchy relationships | REMOTE WRITE | D |
 | 13–14 | Add 32 Project items and populate three fields | REMOTE WRITE | D |
-| 15 | Configure supported views or record exact manual boundary | REMOTE or manual WRITE | D |
+| 15.1 | Record three pending view lifecycles and stop automation | LOCAL WRITE | D evidence |
+| 15.2 | User configures exactly three views in GitHub UI | USER MANUAL REMOTE WRITE | D |
+| 15.3 | Authenticated UI inspection and verified view-state import | READ-ONLY REMOTE + LOCAL WRITE | D evidence |
 | 16 | Compare all managed remote resources with the manifest | READ-ONLY | D completion |
 | 17–18 | Finalize checksummed state or resume additively | LOCAL WRITE / READ-ONLY | Evidence |
 

@@ -27,23 +27,52 @@ No dates, owners, risk scores, iterations, or automation are added initially.
 - Layout: board.
 - Filter: `Priority:MUST`.
 - Group: Status.
-- Sort: Priority, then Estimate ascending.
+- Primary sort: Priority in the configured field-option order.
+- Secondary sort: Estimate ascending.
 - Purpose: the smallest actionable strict-MVP view.
 
 ### Full Backlog
 
 - Layout: table.
-- Filter: all real issues.
-- Columns: Status, Priority, Parent issue, Estimate, Labels.
-- Sort: Priority, then Parent issue, then title.
+- Filter: all real issues, represented in the GitHub UI by no active filter.
+- Required columns: Status, Priority, Parent issue, Estimate, Labels.
+- Primary sort: Priority in the configured field-option order.
+- Secondary sort: Parent issue ascending.
+- Tertiary sort: Title ascending.
 - Purpose: inspect all created work without mixing in parking-lot prose.
 
 ### Umbrella Progress
 
 - Layout: table.
-- Filter: `label:type:umbrella`.
-- Columns: Status, Priority, Estimate, Sub-issue progress.
-- Sort: title ascending.
+- Filter semantics: `label:type:umbrella`. A quoted or UI-normalized form is
+  acceptable only when it selects that exact label.
+- Required columns: Status, Priority, Estimate, Sub-issue progress.
+- Sort: Title ascending.
 - Purpose: compact progress over U01–U08.
+
+## Configuration and verification method
+
+The user manually configures these three views after the automated Gate D
+workflow has created and verified the Project, issues, hierarchy, items,
+fields, and field values. Automated view mutation is prohibited for this
+approved configuration because the available GitHub CLI/API interfaces cannot
+express and read back every required grouping and multi-field sorting
+property.
+
+Gate D view completion requires all of the following:
+
+- exactly the three named views above, with no extra managed or unexpected
+  view;
+- authenticated, read-only GitHub UI inspection of each view's Project
+  identity, name, layout, filter, visible fields or columns, grouping, and full
+  sorting order;
+- the user's exact configuration attestation recorded by the execution
+  runbook;
+- one complete, verified execution-state record per view.
+
+Screenshots may supplement the authenticated UI inspection, but cannot replace
+it and cannot independently authorize `verified=true`. A pending, blocked,
+manual-required, incomplete, duplicated, or mismatched view is not completed
+and prevents Gate D finalization.
 
 Project configuration is a Gate D remote write and remains unexecuted.
