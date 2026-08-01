@@ -158,9 +158,18 @@ def commit_and_verify(args: argparse.Namespace, root: Path) -> dict[str, object]
     committed = output("git", "show", "--format=", "--name-only", "HEAD").splitlines()
     if subject != args.message or sorted(set(committed)) != expected_paths:
         raise RuntimeError("commit read-back does not match approved subject or paths")
-    if output("git", "status", "--porcelain=v1", "--untracked-files=all").strip():
-        raise RuntimeError("working tree is not clean after approved commit")
-    return {"commit_sha": sha, "commit_subject": subject, "commit_paths": sorted(set(committed))}
+    remaining = output("git", "status", "--porcelain=v1", "--untracked-files=all").splitlines()
+    approved_remaining = [
+        line for line in remaining if line[3:].split(" -> ")[-1] in expected_paths
+    ]
+    if approved_remaining:
+        raise RuntimeError("approved paths are not clean after commit")
+    return {
+        "commit_sha": sha,
+        "commit_subject": subject,
+        "commit_paths": sorted(set(committed)),
+        "preserved_unscoped_changes": remaining,
+    }
 
 
 def push_and_verify(root: Path, branch: str, expected_sha: str) -> dict[str, object]:
