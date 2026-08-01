@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from hashlib import sha256
 from importlib.util import module_from_spec, spec_from_file_location
@@ -32,16 +33,82 @@ def _load_foundation_validator() -> _FoundationValidator:
 VALIDATOR = _load_foundation_validator()
 
 
-def _git_metadata_snapshot() -> dict[str, str]:
-    git_directory = REPOSITORY_ROOT / ".git"
-    snapshot: dict[str, str] = {}
-    for path in sorted(git_directory.rglob("*")):
-        relative_path = str(path.relative_to(git_directory))
-        if path.is_file():
-            snapshot[relative_path] = sha256(path.read_bytes()).hexdigest()
-        elif path.is_dir():
-            snapshot[f"{relative_path}/"] = "directory"
-    return snapshot
+def _run_git(
+    repository_root: Path, *arguments: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *arguments],
+        cwd=repository_root,
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _git_state_snapshot(repository_root: Path) -> dict[str, str]:
+    git_directory = repository_root / ".git"
+    upstream = _run_git(
+        repository_root,
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        "@{upstream}",
+        check=False,
+    )
+    status = _run_git(
+        repository_root, "status", "--porcelain=v1", "--untracked-files=all"
+    )
+    return {
+        "head": _run_git(repository_root, "rev-parse", "HEAD").stdout.strip(),
+        "branch": _run_git(repository_root, "branch", "--show-current").stdout.strip(),
+        "config": sha256((git_directory / "config").read_bytes()).hexdigest(),
+        "index": sha256((git_directory / "index").read_bytes()).hexdigest(),
+        "remotes": _run_git(repository_root, "remote").stdout,
+        "upstream_returncode": str(upstream.returncode),
+        "upstream": upstream.stdout,
+        "status": status.stdout,
+    }
+
+
+@pytest.fixture
+def local_only_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_AUTHOR_DATE", "2000-01-01T00:00:00+00:00")
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2000-01-01T00:00:00+00:00")
+
+    repository_root = tmp_path / "local-only-repository"
+    repository_root.mkdir()
+    _run_git(repository_root, "init", "--initial-branch=main")
+    _run_git(repository_root, "config", "--local", "user.name", "IntentGuard Test")
+    _run_git(
+        repository_root,
+        "config",
+        "--local",
+        "user.email",
+        "intentguard-tests@example.invalid",
+    )
+    (repository_root / "README.md").write_text("# Isolated Git fixture\n", encoding="utf-8")
+    _run_git(repository_root, "add", "--", "README.md")
+    _run_git(repository_root, "-c", "commit.gpgSign=false", "commit", "-m", "test fixture")
+
+    assert _run_git(repository_root, "branch", "--show-current").stdout.strip() == "main"
+    assert _run_git(repository_root, "rev-list", "--count", "HEAD").stdout.strip() == "1"
+    assert _run_git(repository_root, "remote").stdout == ""
+    assert _run_git(
+        repository_root,
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        "@{upstream}",
+        check=False,
+    ).returncode != 0
+    assert _run_git(
+        repository_root, "status", "--porcelain=v1", "--untracked-files=all"
+    ).stdout == ""
+    return repository_root
 
 
 def test_authoritative_specification_remains_in_place() -> None:
@@ -87,8 +154,12 @@ def test_default_any_mode_accepts_initialized_repository() -> None:
     VALIDATOR.main([])
 
 
-def test_local_only_accepts_initialized_main_repository_without_remote() -> None:
-    VALIDATOR.assert_git_state(VALIDATOR.inspect_git_state(REPOSITORY_ROOT), "local-only")
+def test_local_only_accepts_initialized_main_repository_without_remote(
+    local_only_repository: Path,
+) -> None:
+    VALIDATOR.assert_git_state(
+        VALIDATOR.inspect_git_state(local_only_repository), "local-only"
+    )
 
 
 def test_uninitialized_rejects_functional_repository() -> None:
@@ -107,13 +178,15 @@ def test_invalid_git_state_argument_fails() -> None:
     assert error.value.code == 2
 
 
-def test_git_validation_modes_do_not_modify_git_state() -> None:
-    before = _git_metadata_snapshot()
-    state = VALIDATOR.inspect_git_state(REPOSITORY_ROOT)
+def test_git_validation_modes_do_not_modify_git_state(
+    local_only_repository: Path,
+) -> None:
+    before = _git_state_snapshot(local_only_repository)
+    state = VALIDATOR.inspect_git_state(local_only_repository)
 
     VALIDATOR.assert_git_state(state, "any")
     VALIDATOR.assert_git_state(state, "local-only")
     with pytest.raises(AssertionError):
         VALIDATOR.assert_git_state(state, "uninitialized")
 
-    assert _git_metadata_snapshot() == before
+    assert _git_state_snapshot(local_only_repository) == before
