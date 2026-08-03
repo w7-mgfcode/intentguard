@@ -340,6 +340,15 @@ error=state.get("error")
 if (failed_operation is None)!=(error is None):
     raise SystemExit("STATE_MIGRATION_REQUIRED: active failure fields are incomplete")
 if failed_operation is not None:
+    # A defect in `ig_state failure` recorded `error` as the structured failure
+    # object rather than its message. Accept that legacy shape only when it is
+    # the exact structured record for this failure, so a resume reports the real
+    # error instead of a misleading malformed-state abort. Everything the string
+    # form must satisfy is still required of the embedded message.
+    if isinstance(error,dict):
+        if error.get("operation")!=failed_operation or not isinstance(error.get("exit_code"),int) or isinstance(error.get("exit_code"),bool):
+            raise SystemExit("STATE_MIGRATION_REQUIRED: active failure is malformed")
+        error=error.get("message")
     if not isinstance(failed_operation,str) or not failed_operation or not isinstance(error,str) or not error:
         raise SystemExit("STATE_MIGRATION_REQUIRED: active failure is malformed")
     if state.get("last_attempted_operation")!=failed_operation:
@@ -1266,7 +1275,10 @@ elif operation == "failure":
     op_name, exit_code, message = args
     failure = {"operation": op_name, "exit_code": int(exit_code), "message": clean_error(message)}
     state["failed_operation"] = op_name
-    state["error"] = failure
+    # The resume preflight requires `error` to be a non-empty string, and the
+    # full structured record is preserved in failure_history. Writing the dict
+    # here made a real failure unreadable on resume.
+    state["error"] = failure["message"] or f'{op_name} failed with exit code {failure["exit_code"]}'
     state["failure_history"].append({
         **failure,
         "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
@@ -2228,7 +2240,37 @@ Status, Priority, Estimate, Parent issue, and Sub-issues progress field; extract
 their node and required option IDs; persist all five fields; and read back exact
 names and options before any item consumes the IDs.
 
+This section records `fields` as one document only at its end, because the Gate D
+preflight requires that record to contain exactly the five manifest fields. A
+field can therefore exist remotely, created and verified by this runbook, while
+`fields` is still empty — which is exactly the state after a failure between
+creation and extraction. The `fields` collection alone cannot distinguish that
+from a foreign field, so this runbook's own prior creation is recognized from the
+`attempt_history` audit trail instead. `ig_field_is_self_created` requires a
+recorded creation attempt for that exact operation and no unresolved failure for
+it, and every such field is still verified against live GitHub by the same
+read-back the original creation used. A field with no recorded creation attempt
+remains an adoption stop.
+
 ```bash
+ig_field_is_self_created() {
+  # $1 = the 09-create-* operation name that would have created this field.
+  uv run --locked python - "$IG_STATE_FILE" "$1" <<'PY'
+import json,sys
+from pathlib import Path
+state=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+operation=sys.argv[2]
+attempts=[row for row in state.get("attempt_history",[]) if isinstance(row,dict) and row.get("operation")==operation]
+if not attempts:
+    raise SystemExit(1)
+# An operation whose most recent audit outcome is an unresolved failure is not
+# evidence of a successful self-creation.
+if state.get("failed_operation")==operation:
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
 ig_verify_priority_field() {
   gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
   uv run --locked python - "$IG_FIELDS_JSON_FILE" <<'PY'
@@ -2267,16 +2309,24 @@ if test "${ig_field_counts[1]}" -eq 0; then
   ig_run_mutation '09-create-priority-field' gh project field-create "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --name 'Priority' --data-type SINGLE_SELECT --single-select-options 'MUST,SHOULD,STRETCH,POST-WEEKEND' --format json || exit 1
   ig_verify_operation '09-create-priority-field' ig_verify_priority_field || exit 1
 elif test -z "$(ig_state_entry fields Priority)"; then
-  printf '%s\n' 'STOP: unrecorded Priority field requires explicit adoption.' >&2
-  exit 1
+  if ig_field_is_self_created '09-create-priority-field'; then
+    ig_verify_operation '09-reuse-priority-field' ig_verify_priority_field || exit 1
+  else
+    printf '%s\n' 'STOP: unrecorded Priority field requires explicit adoption.' >&2
+    exit 1
+  fi
 fi
 if test "${ig_field_counts[2]}" -eq 0; then
   test -z "$(ig_state_entry fields Estimate)" || exit 1
   ig_run_mutation '09-create-estimate-field' gh project field-create "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --name 'Estimate' --data-type NUMBER --format json || exit 1
   ig_verify_operation '09-create-estimate-field' ig_verify_estimate_field || exit 1
 elif test -z "$(ig_state_entry fields Estimate)"; then
-  printf '%s\n' 'STOP: unrecorded Estimate field requires explicit adoption.' >&2
-  exit 1
+  if ig_field_is_self_created '09-create-estimate-field'; then
+    ig_verify_operation '09-reuse-estimate-field' ig_verify_estimate_field || exit 1
+  else
+    printf '%s\n' 'STOP: unrecorded Estimate field requires explicit adoption.' >&2
+    exit 1
+  fi
 fi
 
 # A new ProjectV2 ships a built-in Status field whose options are Todo,
@@ -2710,7 +2760,18 @@ PY
 )"
 else
   ig_milestone_list="${IG_TEMP_DIR}/milestone-list.json"
-  gh api --paginate --slurp "repos/${IG_REPO}/milestones?state=all&per_page=100" > "$ig_milestone_list"
+  # `--slurp` requires gh >= 2.53 and this runbook must also run on 2.46, so the
+  # pages are wrapped into one JSON array here instead. `--paginate` on a
+  # top-level JSON array concatenates the pages, so the array is rebuilt from
+  # the concatenated values; the reader below accepts either shape.
+  gh api --paginate "repos/${IG_REPO}/milestones?state=all&per_page=100" \
+    | uv run --locked python -c 'import json,sys; d=json.JSONDecoder(); t=sys.stdin.read(); i=0; out=[]
+while True:
+    t2=t[i:].lstrip()
+    if not t2: break
+    i=len(t)-len(t2); v,off=d.raw_decode(t,i); out.append(v); i=off
+print(json.dumps(out,ensure_ascii=False))' > "$ig_milestone_list"
+  test -s "$ig_milestone_list"
   ig_matching_milestones="$(uv run --locked python - "$ig_milestone_list" "$ig_milestone_title" <<'PY'
 import json,sys
 from pathlib import Path
@@ -2874,8 +2935,24 @@ test "$(uv run --locked python -c 'import json,sys; print(len(json.load(open(sys
 ## 13. Manifest-driven Project items — REMOTE WRITE, Gate D
 
 The GraphQL read-back carries both item IDs and issue URLs. Recorded items are
-reverified. An existing unrecorded item requires adoption; only an absent item
-is added.
+reverified. Only an absent item is added.
+
+Two observed GitHub behaviors shape this section:
+
+- Adding an issue to a Project also adds its entire sub-issue subtree. Because
+  section 12 has already applied all 31 relationships, adding the three
+  umbrellas populates all 34 items. Unrecorded items are therefore expected,
+  and `ig_item_is_self_caused` separates the ones this runbook caused — an item
+  whose own add was attempted, or whose recorded/attempted ancestor pulled it in
+  — from genuinely foreign items, which remain an adoption stop. Every
+  self-caused item is still proven by the same exact read-back as a direct add
+  before it is recorded.
+- The item list served immediately after an add can omit the item ID the
+  mutation just returned, for several consecutive queries. The read-back
+  therefore retries on a bounded schedule before reporting a mismatch.
+
+This section adds an item only when none exists, never deletes or replaces one,
+and records nothing it has not read back.
 
 ```bash
 ig_fetch_project_items() {
@@ -2886,8 +2963,16 @@ ig_fetch_project_items() {
 
 ig_verify_project_item() {
   local issue_url="$1" item_id="$2" issue_title="$3"
-  ig_fetch_project_items > "$IG_ITEMS_JSON_FILE"
-  uv run --locked python - "$IG_ITEMS_JSON_FILE" "$issue_url" "$item_id" "$issue_title" <<'PY'
+  # The item list served immediately after `gh project item-add` was observed to
+  # omit the ID that the mutation had just returned, and to keep omitting it for
+  # several consecutive queries before converging. That is read-after-write lag,
+  # not a failed mutation, so the read-back retries on a bounded schedule and
+  # only reports a mismatch once the projection has had time to settle.
+  local attempt
+  for attempt in 1 2 3 4 5 6; do
+    test "$attempt" -eq 1 || sleep "$attempt"
+    ig_fetch_project_items > "$IG_ITEMS_JSON_FILE"
+    if uv run --locked python - "$IG_ITEMS_JSON_FILE" "$issue_url" "$item_id" "$issue_title" <<'PY'
 import json,sys
 from pathlib import Path
 d=json.loads(Path(sys.argv[1]).read_text())
@@ -2896,6 +2981,46 @@ if d.get("errors"):
 rows=[row for row in d["data"]["node"]["items"]["nodes"] if row["id"]==sys.argv[3] and row.get("content",{}).get("url")==sys.argv[2] and row.get("content",{}).get("title")==sys.argv[4]]
 if len(rows)!=1:
     raise SystemExit("Project item read-back mismatch")
+PY
+    then
+      return 0
+    fi
+  done
+  printf 'Project item read-back mismatch after %d attempts: %s\n' 6 "$issue_url" >&2
+  return 1
+}
+
+ig_item_is_self_caused() {
+  # $1 = manifest issue key whose remote Project item is not recorded in state.
+  #
+  # GitHub adds an issue's entire sub-issue subtree to the Project when the
+  # parent issue is added, so this runbook's own recorded add for an ancestor
+  # legitimately produces unrecorded descendant items. Those are self-caused and
+  # are recorded after an exact read-back. An item with no recorded ancestor and
+  # no attempt of its own is foreign and still requires explicit adoption.
+  uv run --locked python - "$IG_STATE_FILE" "$IG_MANIFEST_FILE" "$1" <<'PY'
+import json,sys
+from pathlib import Path
+state=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+manifest=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+key=sys.argv[3]
+attempted={row.get("operation") for row in state.get("attempt_history",[]) if isinstance(row,dict)}
+recorded=state.get("project_items",{})
+parents={row["id"]:row.get("parent") for row in manifest["issues"]}
+if key not in parents:
+    raise SystemExit(1)
+if f"13-project-item-{key}" in attempted:
+    raise SystemExit(0)
+seen=set()
+current=parents[key]
+while current is not None:
+    if current in seen or current not in parents:
+        raise SystemExit(1)
+    seen.add(current)
+    if recorded.get(current,{}).get("verified") is True or f"13-project-item-{current}" in attempted:
+        raise SystemExit(0)
+    current=parents[current]
+raise SystemExit(1)
 PY
 }
 
@@ -2927,12 +3052,24 @@ PY
     continue
   fi
   if test "${#ig_remote_item_ids[@]}" -ne 0; then
-    printf 'STOP: unrecorded Project item %s requires explicit adoption.\n' "$ig_issue_key" >&2
-    exit 1
+    test "${#ig_remote_item_ids[@]}" -eq 1 || {
+      printf 'STOP: duplicate remote Project items for %s\n' "$ig_issue_key" >&2
+      exit 1
+    }
+    if ig_item_is_self_caused "$ig_issue_key"; then
+      # Caused by this runbook, directly or by GitHub's sub-issue auto-add. The
+      # shared read-back below still proves the exact identity before recording.
+      ig_state attempt "13-project-item-${ig_issue_key}"
+      ig_returned_item_id="${ig_remote_item_ids[0]}"
+    else
+      printf 'STOP: unrecorded Project item %s requires explicit adoption.\n' "$ig_issue_key" >&2
+      exit 1
+    fi
+  else
+    ig_run_mutation "13-project-item-${ig_issue_key}" gh project item-add "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --url "$ig_issue_url" --format json || exit 1
+    ig_returned_item_id="$(uv run --locked python -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$IG_MUTATION_STDOUT")"
+    test -n "$ig_returned_item_id"
   fi
-  ig_run_mutation "13-project-item-${ig_issue_key}" gh project item-add "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --url "$ig_issue_url" --format json || exit 1
-  ig_returned_item_id="$(uv run --locked python -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$IG_MUTATION_STDOUT")"
-  test -n "$ig_returned_item_id"
   ig_verify_operation "13-project-item-${ig_issue_key}" ig_verify_project_item "$ig_issue_url" "$ig_returned_item_id" "$ig_issue_title" || exit 1
   ig_item_record="$(uv run --locked python - "$ig_returned_item_id" "$ig_issue_id" "$ig_issue_url" <<'PY'
 import json,sys
