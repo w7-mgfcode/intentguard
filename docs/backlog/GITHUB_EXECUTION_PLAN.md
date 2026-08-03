@@ -1482,6 +1482,15 @@ ig_run_mutation() {
 ig_verify_operation() {
   local operation="$1"
   shift
+  # A verify may run without a preceding mutation (a reused field, a read-only
+  # view read-back). The resume preflight requires an active failure to match
+  # `last_attempted_operation`, so a standalone verify that fails must own an
+  # attempt row too, or it records a failure no resume can interpret. Recording
+  # the attempt here is idempotent for the mutation path, which already
+  # attributes the same operation name.
+  local last_attempted
+  last_attempted="$(uv run --locked python -c 'import json,sys; print(json.load(open(sys.argv[1])).get("last_attempted_operation") or "")' "$IG_STATE_FILE")"
+  test "$last_attempted" = "$operation" || ig_state attempt "$operation"
   : > "$IG_MUTATION_STDOUT"
   : > "$IG_MUTATION_STDERR"
   if "$@" >"$IG_MUTATION_STDOUT" 2>"$IG_MUTATION_STDERR"; then
