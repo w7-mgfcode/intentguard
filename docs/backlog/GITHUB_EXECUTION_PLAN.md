@@ -3250,17 +3250,22 @@ for record in s["project_items"].values():
         raise SystemExit("Project item field values are incomplete")
 PY
 
-# Re-read the view set before creating any manual-pending record. At this
-# boundary the only permitted remote view is the state-owned default-view side
-# effect captured in section 8. Any other remote view is unowned and requires
-# a separate, identity-specific adoption decision.
+# Re-read the view set before creating any manual-pending record. Two kinds of
+# remote view are permitted here: the state-owned default-view side effect
+# captured in section 8, and a view carrying one of the three approved manifest
+# view names, which is what sections 15.1 and 15.2 exist to produce. This
+# section is re-runnable after the approved views exist, so it must not treat
+# the approved configuration as a foreign resource. Any remote view that is
+# neither state-owned nor manifest-named is unowned and still requires a
+# separate, identity-specific adoption decision.
 ig_verify_operation '15.1-project-views-readback' ig_read_views_request || exit 1
 cp -- "$IG_MUTATION_STDOUT" "$IG_VIEWS_JSON_FILE"
-uv run --locked python - "$IG_STATE_FILE" "$IG_VIEWS_JSON_FILE" <<'PY'
+uv run --locked python - "$IG_STATE_FILE" "$IG_VIEWS_JSON_FILE" "$IG_MANIFEST_FILE" <<'PY'
 import json,sys
 from pathlib import Path
 state=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 payload=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+manifest=json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 rows=payload.get("views",payload if isinstance(payload,list) else [])
 if not isinstance(rows,list): raise SystemExit("Project view listing has an unsupported shape")
 remote_ids={str(row.get("id") or row.get("node_id") or "") for row in rows}
@@ -3270,7 +3275,15 @@ owned_ids={
     for record in state["views"].values()
     if record.get("source")=="project-creation-side-effect" and record.get("remote_view_id")
 }
-if remote_ids!=owned_ids:
+approved_names={view["name"] for view in manifest["project"]["views"]}
+if len(rows)>len(approved_names):
+    raise SystemExit("ADOPTION REQUIRED: remote Project view set contains an unrecorded resource")
+unowned=[
+    row for row in rows
+    if str(row.get("id") or row.get("node_id") or "") not in owned_ids
+    and row.get("name") not in approved_names
+]
+if unowned:
     raise SystemExit("ADOPTION REQUIRED: remote Project view set contains an unrecorded resource")
 PY
 
