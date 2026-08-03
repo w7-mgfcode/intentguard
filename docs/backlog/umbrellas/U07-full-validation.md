@@ -1,5 +1,12 @@
-# U07 — Full validation and acceptance gate
+# E07 — Full validation and acceptance gate
 
+
+## Migration identity
+
+- Canonical identifier: `E07` (GitHub issue type: epic).
+- Legacy identifier: `U07` (retained as `old_identifier`).
+- Parent umbrella: `W03`.
+- Milestone: `M1 — IntentGuard Weekend MVP`.
 ## Objective
 
 Execute the complete CPU-reproducible validation suite, audit AC-001–AC-014 and strict-MVP status, and produce a truthful completion decision.
@@ -10,7 +17,7 @@ Passing isolated features is insufficient; the final repository needs integrated
 
 ## Parent identifier
 
-Master issue `[MVP] Deliver IntentGuard Weekend MVP`.
+Umbrella issue `W03` in milestone `M1 — IntentGuard Weekend MVP`.
 
 ## Source task
 
@@ -34,7 +41,7 @@ Validate and classify existing behavior; do not redesign features, relax MUST cr
 
 ## MUST scope
 
-C07.1 CPU suite and validation orchestration; C07.2 acceptance/status audit and Sunday completion gate.
+S07.1 CPU suite and validation orchestration; S07.2 acceptance/status audit and Sunday completion gate.
 
 ## Explicit non-goals
 
@@ -66,11 +73,11 @@ U01–U06 report done; commands and evidence paths are stable; no known implemen
 
 ## Definition of done
 
-C07.1 and C07.2 pass, AC-001–AC-014 have reviewed evidence, and the strict-MVP verdict is explicit and defensible.
+S07.1 and S07.2 pass, AC-001–AC-014 have reviewed evidence, and the strict-MVP verdict is explicit and defensible.
 
 ## Labels
 
-`type:umbrella`, `priority:MUST`, `area:quality`
+`type:epic`, `priority:MUST`, `area:quality`
 
 ## Estimate
 

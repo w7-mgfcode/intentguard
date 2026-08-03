@@ -1,5 +1,12 @@
-# U03 — TF-IDF logistic-regression baseline
+# E03 — TF-IDF logistic-regression baseline
 
+
+## Migration identity
+
+- Canonical identifier: `E03` (GitHub issue type: epic).
+- Legacy identifier: `U03` (retained as `old_identifier`).
+- Parent umbrella: `W02`.
+- Milestone: `M1 — IntentGuard Weekend MVP`.
 ## Objective
 
 Train, persist, reload, and measure one deterministic scikit-learn TF-IDF logistic-regression baseline using the U02 contract.
@@ -10,7 +17,7 @@ A credible lexical baseline makes transformer improvement measurable and provide
 
 ## Parent identifier
 
-Master issue `[MVP] Deliver IntentGuard Weekend MVP`.
+Umbrella issue `W02` in milestone `M1 — IntentGuard Weekend MVP`.
 
 ## Source task
 
@@ -34,7 +41,7 @@ One explicitly configured TF-IDF plus logistic-regression pipeline; shared split
 
 ## MUST scope
 
-C03.1 pipeline and fit; C03.2 artifact reload parity; C03.3 measured report and regression checks.
+S03.1 pipeline and fit; S03.2 artifact reload parity; S03.3 measured report and regression checks.
 
 ## Explicit non-goals
 
@@ -66,11 +73,11 @@ U02 evidence is complete and baseline hyperparameters are explicitly resolved in
 
 ## Definition of done
 
-C03.1–C03.3 pass and the working-baseline checkpoint is recorded as Implemented and Measured.
+S03.1–S03.3 pass and the working-baseline checkpoint is recorded as Implemented and Measured.
 
 ## Labels
 
-`type:umbrella`, `priority:MUST`, `area:baseline`
+`type:epic`, `priority:MUST`, `area:baseline`
 
 ## Estimate
 

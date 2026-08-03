@@ -1,5 +1,12 @@
-# U01 — Project foundation and reproducibility
+# E01 — Project foundation and reproducibility
 
+
+## Migration identity
+
+- Canonical identifier: `E01` (GitHub issue type: epic).
+- Legacy identifier: `U01` (retained as `old_identifier`).
+- Parent umbrella: `W01`.
+- Milestone: `M1 — IntentGuard Weekend MVP`.
 ## Objective
 
 Establish repository governance, Python 3.11 packaging, locked dependencies, reviewed configuration, command contracts, foundation tests, and CPU CI.
@@ -10,7 +17,7 @@ Every later result depends on a repeatable environment and an honest command sur
 
 ## Parent identifier
 
-Master issue `[MVP] Deliver IntentGuard Weekend MVP`.
+Umbrella issue `W01` in milestone `M1 — IntentGuard Weekend MVP`.
 
 ## Source task
 
@@ -34,7 +41,7 @@ Foundation only. Do not implement data, model, evaluation, API, or demo behavior
 
 ## MUST scope
 
-C01.1 governance/skeleton; C01.2 packaging/lock/config; C01.3 Make/CI/collaboration and validation scaffolding.
+S01.1 governance/skeleton; S01.2 packaging/lock/config; S01.3 Make/CI/collaboration and validation scaffolding.
 
 ## Explicit non-goals
 
@@ -66,11 +73,11 @@ Dependencies and boundaries are justified by the specification; Gate A is approv
 
 ## Definition of done
 
-C01.1–C01.3 pass their validations and the repository reports the actual foundation status without claiming ML completion.
+S01.1–S01.3 pass their validations and the repository reports the actual foundation status without claiming ML completion.
 
 ## Labels
 
-`type:umbrella`, `priority:MUST`, `area:foundation`
+`type:epic`, `priority:MUST`, `area:foundation`
 
 ## Estimate
 

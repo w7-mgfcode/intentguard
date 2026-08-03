@@ -202,6 +202,76 @@ environment.
 
 ## 2. Validate and stream the machine manifest — READ-ONLY
 
+### Gate D migration preflight — mandatory read-only stop
+
+Before entering any section labelled `REMOTE WRITE, Gate D`, execute the
+following preflight in the same shell. It performs no state or GitHub write.
+The preflight must run before labels, Project, fields, milestone, issues,
+relationships, items, or views are touched. The current pre-migration state is
+expected to fail with `STATE_MIGRATION_REQUIRED`.
+
+```bash
+ig_gate_d_migration_preflight() {
+  uv run --locked python - "$IG_MANIFEST_FILE" "$IG_STATE_FILE" "$IG_REPO" <<'PY'
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+state_path = Path(sys.argv[2])
+repository_name = sys.argv[3]
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+state = json.loads(state_path.read_text(encoding="utf-8"))
+current_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+if state.get("schema_version") != 1:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: state container schema must remain 1")
+if state.get("hierarchy_version") != 2 or state.get("manifest_sha256") != current_sha:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: audited hierarchy-v2 state migration is required")
+local_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+remote_line = subprocess.check_output(
+    ["git", "ls-remote", repository_name, "refs/heads/main"], text=True
+).strip()
+remote_sha = remote_line.split()[0] if remote_line else ""
+history = state.get("migration_history")
+if not isinstance(history, list) or not any(
+    row.get("migration_id") == "hierarchy-v2"
+    and row.get("verified") is True
+    and row.get("from_manifest_sha256") == manifest["migration"]["migration_from_manifest_sha256"]
+    and row.get("to_manifest_sha256") == current_sha
+    and row.get("commit_sha") == local_sha == remote_sha
+    and row.get("state_reset") is False
+    for row in history
+    if isinstance(row, dict)
+):
+    raise SystemExit("STATE_MIGRATION_REQUIRED: verified hierarchy-v2 migration history is missing")
+if len(state.get("attempt_history", [])) != 18 or len(state.get("failure_history", [])) != 3:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: Gate C history must be preserved")
+if state.get("failed_operation") is not None or state.get("error") is not None:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: active failure must be cleared")
+if state.get("state_reset", False) is not False:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: state_reset must remain false")
+if any(
+    state.get(section)
+    for section in ("milestone", "labels", "issues", "hierarchy", "project_items", "fields", "views")
+):
+    raise SystemExit("STATE_MIGRATION_REQUIRED: Gate D collections must be empty before first run")
+if state.get("repository", {}).get("verified") is not True:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: Gate C repository evidence is missing")
+print("Gate D migration preflight passed")
+PY
+}
+
+# Mandatory before the first Gate D mutation. The current state intentionally
+# stops here until a separately approved, pushed and read-back-verified
+# hierarchy-v2 migration is recorded.
+ig_gate_d_migration_preflight || exit $?
+```
+
+No later Gate D block may bypass this function. It is a hard stop, not a
+recoverable partial Gate D operation.
+
 These helpers parse only `github-manifest.json`. Records are deterministic
 compact JSON terminated by NUL, so titles and paths containing whitespace are
 safe. Issue records are enriched in memory with `resolved_labels` and
@@ -223,18 +293,20 @@ labels = m["labels"]
 issues = sorted(m["issues"], key=lambda row: row["creation_order"])
 label_names = {row["name"] for row in labels}
 
-if len(labels) != 15 or len(label_names) != 15:
-    raise SystemExit("manifest must contain 15 unique labels")
+if m.get("schema_version") != 2 or m.get("migration", {}).get("hierarchy_version") != 2:
+    raise SystemExit("manifest schema 2 and hierarchy version 2 are required")
+if len(labels) != 16 or len(label_names) != 16:
+    raise SystemExit("manifest must contain 16 unique managed labels")
 counts = Counter(row.get("type") for row in issues)
-if counts != {"master": 1, "umbrella": 8, "task": 23} or len(issues) != 32:
+if counts != {"umbrella": 3, "epic": 8, "subtask": 23} or len(issues) != 34:
     raise SystemExit(f"invalid issue inventory: {dict(counts)}")
 ids = [row["id"] for row in issues]
 orders = [row["creation_order"] for row in issues]
-if len(set(ids)) != 32 or len(set(orders)) != 32 or orders != list(range(1, 33)):
+if len(set(ids)) != 34 or len(set(orders)) != 34 or orders != list(range(1, 35)):
     raise SystemExit("issue IDs or creation_order values are not unique and contiguous")
 by_id = {row["id"]: row for row in issues}
-if issues[0]["type"] != "master" or issues[0]["parent"] is not None:
-    raise SystemExit("the first issue must be the parentless master")
+if m.get("milestone", {}).get("id") != "M1" or any(row.get("milestone_id") != "M1" or "milestone" in row for row in issues):
+    raise SystemExit("manifest must define M1 and assign every issue to it")
 
 priority_field = next(
     (field for field in m["project"]["fields"] if field["name"] == "Priority"), None
@@ -251,33 +323,61 @@ for row in issues:
         raise SystemExit(f"unsupported priority for {row['id']}")
     estimate = row.get("estimate_hours")
     if not isinstance(estimate, (int, float)) or isinstance(estimate, bool) or estimate < 0:
-        raise SystemExit(f"invalid estimate for {row['id']}")
+        raise SystemExit(f"invalid numeric estimate for {row['id']}")
+    if row["type"] == "subtask":
+        if row.get("estimate_kind") != "direct" or row.get("expected_rollup") is not None or row.get("rollup_children") != []:
+            raise SystemExit(f"invalid direct estimate contract for {row['id']}")
+    else:
+        if row.get("estimate_kind") != "derived-rollup" or not isinstance(row.get("expected_rollup"), (int, float)):
+            raise SystemExit(f"invalid derived estimate contract for {row['id']}")
+        children = row.get("rollup_children")
+        if not isinstance(children, list) or len(children) != len(set(children)):
+            raise SystemExit(f"invalid rollup children for {row['id']}")
     if not Path(row["body_file"]).is_file():
         raise SystemExit(f"missing body file for {row['id']}")
-    if row["type"] == "master":
-        resolved_labels = row.get("labels", [])
-    else:
-        resolved_labels = [f"type:{row['type']}", f"priority:{row['priority']}", f"area:{row['area']}"]
+    resolved_labels = row.get("labels", [])
     if not resolved_labels or any(name not in label_names for name in resolved_labels):
         raise SystemExit(f"unknown resolved label for {row['id']}")
     enriched.append({**row, "resolved_labels": resolved_labels, "initial_status": "Backlog"})
+if sum(float(row["estimate_hours"]) for row in enriched if row["type"] == "subtask") != 16.0:
+    raise SystemExit("direct subtask estimate total must equal 16 hours")
+project_items = {row["id"]: row for row in m["project_items"]}
+if len(project_items) != 34:
+    raise SystemExit("manifest must contain 34 Project items")
+for row in enriched:
+    item = project_items.get(row["id"])
+    if not item or not isinstance(item.get("estimate_hours"), (int, float)) or isinstance(item.get("estimate_hours"), bool):
+        raise SystemExit(f"Project Estimate assignment is missing for {row['id']}")
+    if item.get("estimate_kind") != row.get("estimate_kind") or item.get("expected_rollup") != row.get("expected_rollup") or item.get("rollup_children") != row.get("rollup_children"):
+        raise SystemExit(f"Project rollup contract mismatch for {row['id']}")
 
 edges = []
-for group_index, group in enumerate(m["relationships"]):
+for edge_index, group in enumerate(m["relationships"]):
     parent = group["parent"]
     if parent not in by_id:
         raise SystemExit(f"unknown relationship parent: {parent}")
-    for child_index, child in enumerate(group["children"]):
-        if child not in by_id or by_id[child]["parent"] != parent:
-            raise SystemExit(f"invalid relationship: {parent}->{child}")
-        edges.append({
-            "key": f"{parent}->{child}",
-            "parent": parent,
-            "child": child,
-            "creation_order": [group_index, child_index],
-        })
+    relationship_type = group.get("relationship_type")
+    if relationship_type not in {"umbrella-epic", "epic-subtask"}:
+        raise SystemExit("relationship_type is missing or invalid")
+    child = group.get("child")
+    if child not in by_id or by_id[child]["parent"] != parent:
+        raise SystemExit(f"invalid relationship: {parent}->{child}")
+    expected_type = "umbrella-epic" if by_id[parent]["type"] == "umbrella" and by_id[child]["type"] == "epic" else "epic-subtask"
+    if relationship_type != expected_type:
+        raise SystemExit(f"relationship_type does not match parent/child types: {parent}->{child}")
+    edges.append({
+        "key": f"{parent}->{child}",
+        "parent": parent,
+        "child": child,
+        "relationship_type": relationship_type,
+        "creation_order": edge_index,
+    })
 if len(edges) != 31 or len({edge["child"] for edge in edges}) != 31:
     raise SystemExit("manifest must contain 31 unique child relationships")
+if sum(edge["relationship_type"] == "umbrella-epic" for edge in edges) != 8:
+    raise SystemExit("manifest must contain 8 umbrella-epic relationships")
+if sum(edge["relationship_type"] == "epic-subtask" for edge in edges) != 23:
+    raise SystemExit("manifest must contain 23 epic-subtask relationships")
 
 for issue in issues:
     seen = set()
@@ -293,9 +393,10 @@ for issue in issues:
 
 streams = {
     "labels": labels,
-    "master": [row for row in enriched if row["type"] == "master"],
+    "milestone": [m["milestone"]],
     "umbrellas": [row for row in enriched if row["type"] == "umbrella"],
-    "children": [row for row in enriched if row["type"] == "task"],
+    "epics": [row for row in enriched if row["type"] == "epic"],
+    "subtasks": [row for row in enriched if row["type"] == "subtask"],
     "relationships": edges,
     "project-items": enriched,
     "priorities": [{"id": row["id"], "priority": row["priority"]} for row in enriched],
@@ -305,8 +406,8 @@ streams = {
 }
 if stream == "validate":
     print(json.dumps({
-        "master": counts["master"], "umbrellas": counts["umbrella"],
-        "children": counts["task"], "issues": len(issues),
+        "milestone": 1, "umbrellas": counts["umbrella"], "epics": counts["epic"],
+        "subtasks": counts["subtask"], "issues": len(issues),
         "relationships": len(edges), "labels": len(labels),
     }, sort_keys=True))
     raise SystemExit(0)
@@ -348,7 +449,7 @@ PY
 }
 
 ig_manifest_stream validate
-for ig_stream in labels master umbrellas children relationships project-items priorities estimates statuses views; do
+for ig_stream in labels milestone umbrellas epics subtasks relationships project-items priorities estimates statuses views; do
   ig_stream_count=0
   while IFS= read -r -d '' ig_record; do
     ig_stream_count=$((ig_stream_count + 1))
@@ -357,7 +458,7 @@ for ig_stream in labels master umbrellas children relationships project-items pr
 done
 ```
 
-Expected counts are `15, 1, 8, 23, 31, 32, 32, 32, 32, 3` in the
+Expected counts are `16, 1, 3, 8, 23, 31, 34, 34, 34, 34, 3` in the
 order printed. Validation stops before mutation on a duplicate identifier or
 creation order, invalid parent, cycle, missing body, unknown label/priority,
 missing estimate, or any inventory mismatch.
@@ -385,9 +486,11 @@ if state.exists():
     raise SystemExit("refusing to overwrite existing execution state")
 document = {
     "schema_version": 1,
+    "hierarchy_version": 2,
     "manifest_path": str(manifest),
     "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
     "repository": {},
+    "milestone": {},
     "project": {},
     "labels": {},
     "issues": {},
@@ -435,6 +538,95 @@ properties, the exact approval reference and timestamp, `source=adopted`, a
 verified flag, and a verification timestamp. Created resources use
 `source=created`; they do not fabricate approval evidence. Authentication
 details, tokens, headers, and environment dumps are never state fields.
+
+### Hierarchy migration contract
+
+The manifest is schema 2 with `hierarchy_version: 2`; the execution-state
+container remains schema 1. A future Gate D migration records
+`previous_manifest_sha256`, `hierarchy_version`, and an append-only
+`migration_history` entry only after the published Gate C repository evidence
+has been read back. It preserves all prior attempts, failures, adoption
+history, repository/project evidence, and empty Gate D collections. It never
+resets or rewrites state and atomically replaces the state only after the new
+manifest and hierarchy records validate. This local documentation change does
+not modify the current ignored state file.
+
+The migration operation below is documented but must not be run during this
+local remediation. It is permitted only after the hierarchy migration commit
+has been pushed normally and both local and remote main have been read back.
+It is additive, atomic, and idempotent:
+
+```bash
+ig_migrate_state_after_remote_readback() {
+  uv run --locked python - "$IG_MANIFEST_FILE" "$IG_STATE_FILE" "$IG_REPO" <<'PY'
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+manifest_path, state_path = map(Path, sys.argv[1:3])
+repository = sys.argv[3]
+state = json.loads(state_path.read_text(encoding="utf-8"))
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+old_sha = "c8c1966a7d512f284bc9a96833b50cfa383b6c06ca30f54cb4401df40f335ed8"
+old_state_bytes_sha = "b0c2623747a30c618d6ac68d2151b52c374feb5762d4c6b1b1ee5ffc3e0e964f"
+new_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+if state.get("schema_version") != 1 or state.get("state_reset", False):
+    raise SystemExit("state migration schema/reset precondition failed")
+if state.get("manifest_sha256") not in {old_sha, new_sha}:
+    raise SystemExit("unexpected previous manifest checksum")
+if any(state.get(section) for section in ("milestone", "labels", "issues", "hierarchy", "project_items", "fields", "views")):
+    raise SystemExit("Gate D collections must be empty for first migration")
+if len(state.get("attempt_history", [])) != 18 or len(state.get("failure_history", [])) != 3:
+    raise SystemExit("Gate C history is incomplete")
+local_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+remote_line = subprocess.check_output(["git", "ls-remote", repository, "refs/heads/main"], text=True).strip()
+remote_sha = remote_line.split()[0] if remote_line else ""
+if not local_sha or local_sha != remote_sha:
+    raise SystemExit("local and remote migration commit do not match")
+if state.get("manifest_sha256") == new_sha:
+    history = state.get("migration_history", [])
+    if any(row.get("migration_id") == "hierarchy-v2" and row.get("commit_sha") == local_sha for row in history):
+        raise SystemExit(0)
+    raise SystemExit("conflicting hierarchy-v2 migration replay")
+if hashlib.sha256(state_path.read_bytes()).hexdigest() != old_state_bytes_sha:
+    raise SystemExit("unexpected pre-migration execution-state checksum")
+state["hierarchy_version"] = 2
+state["manifest_sha256"] = new_sha
+state["state_reset"] = False
+state.setdefault("migration_history", []).append({
+    "migration_id": "hierarchy-v2",
+    "from_manifest_sha256": old_sha,
+    "to_manifest_sha256": new_sha,
+    "commit_sha": local_sha,
+    "verified": True,
+    "state_reset": False,
+})
+state["state_sha256"] = ""
+canonical_state = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+state["state_sha256"] = hashlib.sha256(canonical_state).hexdigest()
+temporary = state_path.with_name(f".{state_path.name}.migration.tmp")
+try:
+    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    json.loads(temporary.read_text(encoding="utf-8"))
+    os.replace(temporary, state_path)
+finally:
+    temporary.unlink(missing_ok=True)
+json.loads(state_path.read_text(encoding="utf-8"))
+written = json.loads(state_path.read_text(encoding="utf-8"))
+stored = written["state_sha256"]
+written["state_sha256"] = ""
+actual = hashlib.sha256(json.dumps(written, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+if stored != actual:
+    raise SystemExit("post-migration state checksum mismatch")
+PY
+}
+
+# Invoke only after a separately approved migration commit and remote read-back:
+# ig_migrate_state_after_remote_readback
+```
 
 ## 4. Atomic state helper — LOCAL WRITE, Gate C/D evidence
 
@@ -642,7 +834,7 @@ if operation == "set-scalar":
     if field not in state or field in protected or isinstance(state[field], (dict, list)):
         raise SystemExit("invalid scalar field")
     state[field] = json.loads(raw)
-elif operation in {"repository", "project", "fields"}:
+elif operation in {"repository", "milestone", "project", "fields"}:
     require(1)
     state[operation] = object_arg(args[0])
 elif operation in {"label", "issue", "hierarchy", "project-item"}:
@@ -794,7 +986,7 @@ elif operation == "finalize":
     if current_manifest_hash != state["manifest_sha256"]:
         raise SystemExit("manifest checksum changed during execution")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    expected = {"labels": 15, "issues": 32, "hierarchy": 31, "project_items": 32, "views": 3}
+    expected = {"labels": 16, "issues": 34, "hierarchy": 31, "project_items": 34, "views": 3}
     for section, count in expected.items():
         if len(state[section]) != count:
             raise SystemExit(f"incomplete {section}: {len(state[section])}/{count}")
@@ -804,15 +996,15 @@ elif operation == "finalize":
         raise SystemExit("cannot finalize while adoption is required")
     if state.get("last_verified_operation") != "final-read-only-verification":
         raise SystemExit("final remote read-back has not been verified")
-    if not state["repository"].get("verified") or not state["project"].get("verified"):
-        raise SystemExit("repository or Project is not verified")
+    if not state["repository"].get("verified") or not state["milestone"].get("verified") or not state["project"].get("verified"):
+        raise SystemExit("repository, M1 milestone, or Project is not verified")
     if not state["fields"].get("verified"):
         raise SystemExit("Project fields are not verified")
     for section in ("labels", "issues", "hierarchy", "project_items"):
         if any(not record.get("verified") for record in state[section].values()):
             raise SystemExit(f"unverified record in {section}")
     manifest_labels = {row["name"] for row in manifest["labels"]}
-    if len(manifest_labels) != 15 or set(state["labels"]) != manifest_labels:
+    if len(manifest_labels) != 16 or set(state["labels"]) != manifest_labels:
         raise SystemExit("managed label state does not exactly match the manifest")
     expected_label_records = {row["name"]: row for row in manifest["labels"]}
     for name, record in state["labels"].items():
@@ -1120,7 +1312,7 @@ PY
 
 ## 7. Gate D labels — REMOTE WRITE, Gate D
 
-The loop processes the 15 manifest labels in array order and always consults
+The loop processes the 16 manifest labels in array order and always consults
 execution state before GitHub. A matching remote label is not owned merely
 because its values match the manifest. If it is absent from state, the loop
 records one adoption-required condition and stops. Approval and adoption are a
@@ -1252,7 +1444,7 @@ PY
   printf 'HARD STOP: conflicting label identity=%s expected=%s observed=%s\n' "$ig_label_name" "$ig_label_expected" "$ig_label_observed" >&2
   exit 1
 done < <(ig_manifest_stream labels)
-test "$(uv run --locked python -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["labels"]))' "$IG_STATE_FILE")" -eq 15
+test "$(uv run --locked python -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["labels"]))' "$IG_STATE_FILE")" -eq 16
 ```
 
 After the loop stops on one exact unrecorded label, obtain approval for that
@@ -1792,13 +1984,18 @@ ig_state fields "$ig_fields_record"
 ig_state verified '09-fields-and-option-ids'
 ```
 
-## 10. Master issue — REMOTE WRITE, Gate D
+## 10. Legacy master/issue flow (disabled after hierarchy migration)
+
+The pre-migration master-plus-U/C flow is retained below only as an auditable
+historical reference. It is deliberately inert and must not be executed.
+
+: <<'LEGACY_MASTER_ISSUE_FLOW'
 
 The master is handled separately so its two-label contract and state variables
 are explicit. State reuse is verified; an unrecorded title match stops for
 adoption.
 
-```bash
+```text
 ig_verify_issue() {
   local issue_row="$1" issue_number="$2" issue_id="$3" issue_url="$4"
   local issue_file="${IG_TEMP_DIR}/issue-readback.json"
@@ -1861,7 +2058,7 @@ The same safe loop is invoked first for all eight umbrellas and then for all
 from each enriched manifest record, uses state before remote search, never uses
 `eval`, and records each verified number, URL, and node ID atomically.
 
-```bash
+```text
 ig_create_issue_row() {
   local issue_row="$1"
   local values recorded matches operation issue_url issue_number issue_id record
@@ -1919,10 +2116,100 @@ while IFS= read -r -d '' ig_issue_row; do
   ig_child_count=$((ig_child_count + 1))
 done < <(ig_manifest_stream children)
 test "$ig_child_count" -eq 23
-test "$(uv run --locked python -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["issues"]))' "$IG_STATE_FILE")" -eq 32
+test "$(uv run --locked python -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["issues"]))' "$IG_STATE_FILE")" -eq 34
 ```
 
-## 12. Manifest-driven hierarchy — REMOTE WRITE, Gate D
+LEGACY_MASTER_ISSUE_FLOW
+
+## 10A. Milestone and canonical W/E/S issue flow — REMOTE WRITE, Gate D
+
+M1 is the native top-level planning resource. `MASTER_ISSUE.md` remains its
+versioned acceptance contract; no remote master issue is created. The active
+flow creates M1, W01–W03, E01–E08, and S01.1–S08.3, assigns every issue to M1,
+and preserves U/C values as `old_identifier` metadata.
+
+### 10A.1 Milestone creation and verification
+
+After duplicate absence and manifest validation, create M1 through the REST
+milestones API. Record and read back its number, title, repository identity,
+open state, and description source. An unrecorded exact match is an adoption
+stop; it is never silently reused.
+
+### 10A.2 Canonical issue creation
+
+The active state-first loop is manifest-driven and creates exactly 3 umbrellas,
+8 epics, and 23 subtasks. It uses canonical body paths, applies exact labels
+and the M1 milestone, records issue number/node ID/URL/body checksum, and
+stops for any unrecorded matching remote issue. The executable mutation blocks
+are the same `ig_create_issue_row`/`ig_verify_issue` pattern as the original
+runbook, with streams `umbrellas`, `epics`, and `subtasks`; no `master` stream
+or issue creation exists in the active flow.
+
+The following state-first helper is the active implementation. It performs
+exact body/label/milestone read-back and records canonical/legacy identities;
+an unrecorded remote match always stops for adoption.
+
+```bash
+ig_verify_issue() {
+  local row="$1" number="$2" node_id="$3" url="$4" readback="${IG_TEMP_DIR}/issue-readback.json"
+  gh issue view "$number" --repo "$IG_REPO" --json id,number,title,url,labels,body,milestone > "$readback"
+  uv run --locked python - "$row" "$readback" "$node_id" "$url" <<'PY'
+import json,sys
+from pathlib import Path
+expected=json.loads(sys.argv[1]); actual=json.loads(Path(sys.argv[2]).read_text())
+if actual.get("id") != sys.argv[3] or actual.get("url") != sys.argv[4] or actual.get("title") != expected["title"]:
+    raise SystemExit("issue identity/title mismatch")
+if sorted(x["name"] for x in actual.get("labels", [])) != sorted(expected["resolved_labels"]):
+    raise SystemExit("issue labels mismatch")
+if actual.get("body", "").rstrip("\\n") != Path(expected["body_file"]).read_text().rstrip("\\n"):
+    raise SystemExit("issue body mismatch")
+milestone=actual.get("milestone") or {}
+if milestone.get("title") != "IntentGuard Weekend MVP": raise SystemExit("issue milestone mismatch")
+PY
+}
+
+ig_create_issue_row() {
+  local row="$1"; local -a v labels cmd
+  mapfile -d '' -t v < <(ig_json_fields "$row" id title body_file resolved_labels old_identifier)
+  local key="${v[0]}" title="${v[1]}" body="${v[2]}" labels_json="${v[3]}" old_id="${v[4]-}"
+  test -f "$body"
+  local recorded="$(ig_state_entry issues "$key")"
+  if test -n "$recorded"; then
+    mapfile -d '' -t readback < <(ig_json_fields "$recorded" number id url)
+    ig_verify_operation "10A-reuse-${key}" ig_verify_issue "$row" "${readback[0]}" "${readback[1]}" "${readback[2]}" || return 1
+    return 0
+  fi
+  local matches="$(gh issue list --repo "$IG_REPO" --state all --limit 1000 --json title | uv run --locked python -c 'import json,sys; print(sum(x["title"]==sys.argv[1] for x in json.load(sys.stdin)))' "$title")"
+  test "$matches" -eq 0 || { printf 'STOP: unrecorded matching issue %s requires explicit adoption.\n' "$key" >&2; return 1; }
+  mapfile -d '' -t labels < <(ig_json_array_stream "$labels_json")
+  cmd=(gh issue create --repo "$IG_REPO" --title "$title" --body-file "$body" --milestone 'IntentGuard Weekend MVP')
+  for label in "${labels[@]}"; do cmd+=(--label "$label"); done
+  ig_run_mutation "10A-create-${key}" "${cmd[@]}" || return 1
+  local url="$(tr -d '\r\n' < "$IG_MUTATION_STDOUT")" number="${url##*/}" node_id="$(gh issue view "${url##*/}" --repo "$IG_REPO" --json id --jq .id)"
+  test -n "$node_id"
+  ig_state issue "$key" "$(uv run --locked python - "$number" "$node_id" "$url" "$old_id" <<'PY'
+import json,sys
+print(json.dumps({"number":int(sys.argv[1]),"id":sys.argv[2],"url":sys.argv[3],"old_identifier":sys.argv[4] or None,"milestone":"M1","verified":False},separators=(",",":")))
+PY
+)"
+  ig_verify_operation "10A-create-${key}" ig_verify_issue "$row" "$number" "$node_id" "$url" || return 1
+  ig_state verified "10A-create-${key}"
+}
+
+ig_run_mutation '10A-create-milestone' gh api "repos/${IG_REPO}/milestones" --method POST \\
+  -f title='IntentGuard Weekend MVP' -f description="$(cat docs/backlog/MASTER_ISSUE.md)" -f state='open' || exit 1
+IG_MILESTONE_NUMBER="$(uv run --locked python -c 'import json,sys; print(json.load(sys.stdin)["number"])' < "$IG_MUTATION_STDOUT")"
+test -n "$IG_MILESTONE_NUMBER"
+gh api "repos/${IG_REPO}/milestones/${IG_MILESTONE_NUMBER}" > "${IG_TEMP_DIR}/milestone-readback.json"
+ig_state milestone "$(printf '%s' "$IG_MILESTONE_NUMBER" | uv run --locked python -c 'import json,sys; print(json.dumps({"number":int(sys.stdin.read()),"id":"M1","source":"created","verified":True},separators=(",",":")))')"
+for stream in umbrellas epics subtasks; do
+  count=0
+  while IFS= read -r -d '' row; do ig_create_issue_row "$row" || exit 1; count=$((count+1)); done < <(ig_manifest_stream "$stream")
+  case "$stream" in umbrellas) test "$count" -eq 3;; epics) test "$count" -eq 8;; subtasks) test "$count" -eq 23;; esac
+done
+```
+
+## 11. Manifest-driven hierarchy — REMOTE WRITE, Gate D
 
 Capability detection is explicit. If `gh issue edit` documents
 `--add-sub-issue`, that exact operation is used; otherwise the parameterized
@@ -2105,9 +2392,9 @@ PY
   ig_state project-item "$ig_issue_key" "$ig_item_record"
   ig_project_item_count=$((ig_project_item_count + 1))
 done < <(ig_manifest_stream project-items)
-test "$ig_project_item_count" -eq 32
+test "$ig_project_item_count" -eq 34
 ig_fetch_project_items > "$IG_ITEMS_JSON_FILE"
-test "$(uv run --locked python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d["data"]["node"]["items"]["nodes"]))' "$IG_ITEMS_JSON_FILE")" -eq 32
+test "$(uv run --locked python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d["data"]["node"]["items"]["nodes"]))' "$IG_ITEMS_JSON_FILE")" -eq 34
 ```
 
 ## 14. Manifest-driven field population — REMOTE WRITE, Gate D
@@ -2176,18 +2463,25 @@ while IFS= read -r -d '' ig_field_row; do
   test "${ig_current_values[0]}" = "$ig_priority" || { printf 'STOP: Priority mismatch for %s\n' "$ig_issue_key" >&2; exit 1; }
   ig_state verified "14-priority-${ig_issue_key}"
 
-  if test -z "${ig_current_values[1]}"; then
-    ig_run_mutation "14-estimate-${ig_issue_key}" gh project item-edit --id "$ig_item_id" --project-id "$IG_PROJECT_ID" --field-id "$IG_ESTIMATE_FIELD_ID" --number "$ig_estimate" --format json || exit 1
-    ig_verify_operation "14-estimate-${ig_issue_key}" ig_verify_item_field "$ig_item_id" 1 "$ig_estimate" number || exit 1
-    ig_fetch_project_items > "$IG_ITEMS_JSON_FILE"
-    mapfile -d '' -t ig_current_values < <(ig_item_field_values "$IG_ITEMS_JSON_FILE" "$ig_item_id")
-  fi
-  uv run --locked python - "${ig_current_values[1]}" "$ig_estimate" <<'PY'
+  # The manifest is authoritative for every numeric Estimate assignment:
+  # subtasks are direct values, while epic and umbrella values are derived
+  # sums recorded as expected_rollup. GitHub is not assumed to calculate them.
+  if test -n "$ig_estimate"; then
+    if test -z "${ig_current_values[1]}"; then
+      ig_run_mutation "14-estimate-${ig_issue_key}" gh project item-edit --id "$ig_item_id" --project-id "$IG_PROJECT_ID" --field-id "$IG_ESTIMATE_FIELD_ID" --number "$ig_estimate" --format json || exit 1
+      ig_verify_operation "14-estimate-${ig_issue_key}" ig_verify_item_field "$ig_item_id" 1 "$ig_estimate" number || exit 1
+      ig_fetch_project_items > "$IG_ITEMS_JSON_FILE"
+      mapfile -d '' -t ig_current_values < <(ig_item_field_values "$IG_ITEMS_JSON_FILE" "$ig_item_id")
+    fi
+    uv run --locked python - "${ig_current_values[1]}" "$ig_estimate" <<'PY'
 import sys
 if float(sys.argv[1]) != float(sys.argv[2]):
     raise SystemExit("Estimate read-back mismatch")
 PY
-  ig_state verified "14-estimate-${ig_issue_key}"
+    ig_state verified "14-estimate-${ig_issue_key}"
+  else
+    ig_state verified "14-estimate-rollup-${ig_issue_key}"
+  fi
 
   if test -z "${ig_current_values[2]}"; then
     ig_run_mutation "14-status-${ig_issue_key}" gh project item-edit --id "$ig_item_id" --project-id "$IG_PROJECT_ID" --field-id "$IG_STATUS_FIELD_ID" --single-select-option-id "$ig_status_option_id" --format json || exit 1
@@ -2200,21 +2494,21 @@ PY
 
   ig_item_record="$(uv run --locked python - "$ig_item_state" "$ig_priority" "$ig_estimate" "$ig_status" <<'PY'
 import json,sys
-d=json.loads(sys.argv[1]); d["values"]={"Priority":sys.argv[2],"Estimate":float(sys.argv[3]),"Status":sys.argv[4]}; d["verified"]=True
+d=json.loads(sys.argv[1]); d["values"]={"Priority":sys.argv[2],"Estimate":None if sys.argv[3]=="" else float(sys.argv[3]),"Status":sys.argv[4]}; d["verified"]=True
 print(json.dumps(d,separators=(",",":")))
 PY
 )"
   ig_state project-item "$ig_issue_key" "$ig_item_record"
   ig_populated_count=$((ig_populated_count + 1))
 done < <(ig_manifest_stream project-items)
-test "$ig_populated_count" -eq 32
+test "$ig_populated_count" -eq 34
 ```
 
 ## 15. Hybrid Project views — manual Gate D boundary and UI verification
 
 The approved views require grouping and multi-field sorting that the available
 CLI/API cannot fully configure and read back. The automated Gate D phase must
-therefore finish the 15 labels, 32 issues, 31 relationships, 32 Project items,
+therefore finish the 16 labels, 34 issues, 31 relationships, 34 Project items,
 five managed fields, and all Priority/Estimate/Backlog values, record three
 pending view lifecycles, and stop without calling a view-mutation API or
 finalizing execution state.
@@ -2231,7 +2525,7 @@ uv run --locked python - "$IG_STATE_FILE" <<'PY'
 import json,sys
 from pathlib import Path
 s=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-expected={"labels":15,"issues":32,"hierarchy":31,"project_items":32}
+expected={"labels":16,"issues":34,"hierarchy":31,"project_items":34}
 for section,count in expected.items():
     if len(s[section])!=count or any(record.get("verified") is not True for record in s[section].values()):
         raise SystemExit(f"automated Gate D inventory is incomplete: {section}")
@@ -2313,7 +2607,7 @@ printf '%s\n' \
   '1. Rename/configure the recorded default view as MVP Board, or create MVP Board when no default was recorded.' \
   '2. Configure MVP Board exactly as specified in docs/backlog/PROJECT_CONFIGURATION.md.' \
   '3. Create and configure Full Backlog exactly as specified there.' \
-  '4. Create and configure Umbrella Progress exactly as specified there.' \
+  '4. Create and configure Umbrella Progress exactly as specified there; its filter must return only W01, W02, and W03.' \
   '5. Preserve exactly those three views; do not leave a fourth view.' \
   '6. Verify every required layout, filter, column, grouping, and complete sort order.' \
   '7. Record this attestation:' \
@@ -2596,12 +2890,12 @@ PY
 ## 16. Exact final read-only verification
 
 Fetch current remote data without mutation. The final verifier compares
-identity, visibility, settings, topics, all 15 managed labels and their
-attributes, all 32 issue titles and labels, all 31 child-parent pairs, the
-linked public Project, field and option IDs, all 32 items and values, and view
+identity, visibility, settings, topics, all 16 managed labels and their
+attributes, all 34 issue titles and labels, all 31 parent-child pairs, the
+linked public Project, field and option IDs, all 34 items and values, and view
 state against the approved manifest. Labels outside the manifest are unmanaged,
 reported separately, and never added to execution state. The managed remote
-subset—not the repository's complete label set—must exactly equal the 15
+subset—not the repository's complete label set—must exactly equal the 16
 manifest labels.
 Any extra issue or Project item fails, which also proves no optional issue was
 created.
@@ -2654,7 +2948,7 @@ if repo["description"]!=expected_repo["description"] or sorted(topics)!=sorted(e
 if not repo["hasIssuesEnabled"] or not repo["hasProjectsEnabled"] or repo["hasWikiEnabled"]: raise SystemExit("repository settings mismatch")
 
 expected_labels={row["name"]:{"name":row["name"],"color":row["color"].upper(),"description":row["description"]} for row in manifest["labels"]}
-if len(expected_labels)!=15: raise SystemExit("manifest managed-label set is not exactly 15")
+if len(expected_labels)!=16: raise SystemExit("manifest managed-label set is not exactly 16")
 remote_by_name={}
 for row in labels:
     remote_by_name.setdefault(row["name"],[]).append(row)
@@ -2688,11 +2982,10 @@ print("unrelated_remote_labels="+json.dumps(unrelated_remote,ensure_ascii=False,
 
 expected_issues={row["title"]:row for row in manifest["issues"]}
 actual_issues={row["title"]:row for row in issues}
-if set(actual_issues)!=set(expected_issues) or len(issues)!=32: raise SystemExit("issue title inventory mismatch")
+if set(actual_issues)!=set(expected_issues) or len(issues)!=34: raise SystemExit("issue title inventory mismatch")
 label_names={row["name"] for row in manifest["labels"]}
 for expected_title, expected in expected_issues.items():
-    if expected["type"]=="master": expected_issue_labels=expected["labels"]
-    else: expected_issue_labels=[f'type:{expected["type"]}',f'priority:{expected["priority"]}',f'area:{expected["area"]}']
+    expected_issue_labels=expected["labels"]
     if any(name not in label_names for name in expected_issue_labels): raise SystemExit(f"unknown expected issue label: {expected_title}")
     actual_issue_labels=sorted(row["name"] for row in actual_issues[expected_title]["labels"])
     if actual_issue_labels!=sorted(expected_issue_labels): raise SystemExit(f"issue labels mismatch: {expected_title}")
@@ -2740,7 +3033,7 @@ if status_options.get("Backlog")!=state["fields"]["Status"]["options"].get("Back
 
 if items_payload.get("errors"): raise SystemExit("Project item query errors")
 remote_items=items_payload["data"]["node"]["items"]["nodes"]
-if len(remote_items)!=32: raise SystemExit("Project item count mismatch")
+if len(remote_items)!=34: raise SystemExit("Project item count mismatch")
 by_url={row.get("content",{}).get("url"):row for row in remote_items}
 for issue in manifest["issues"]:
     saved_issue=state["issues"][issue["id"]]; saved_item=state["project_items"].get(issue["id"])
@@ -2751,7 +3044,7 @@ for issue in manifest["issues"]:
         field=value.get("field") or {}; field_id=field.get("id")
         values[field_id]=value.get("name",value.get("number"))
     if values.get(state["fields"]["Priority"]["id"])!=issue["priority"]: raise SystemExit(f"Priority mismatch: {issue['id']}")
-    if float(values.get(state["fields"]["Estimate"]["id"]))!=float(issue["estimate_hours"]): raise SystemExit(f"Estimate mismatch: {issue['id']}")
+    if issue.get("estimate_hours") is not None and float(values.get(state["fields"]["Estimate"]["id"]))!=float(issue["estimate_hours"]): raise SystemExit(f"Estimate mismatch: {issue['id']}")
     if values.get(state["fields"]["Status"]["id"])!="Backlog": raise SystemExit(f"Status mismatch: {issue['id']}")
 
 edges=[(group["parent"],child) for group in manifest["relationships"] for child in group["children"]]
@@ -2839,11 +3132,11 @@ for name,expected in expected_views.items():
 if len(set(verified_ids))!=3 or set(verified_ids)!=set(remote_ids):
     raise SystemExit("manifest/state/remote verified-view sets differ")
 
-expected_state_counts={"labels":15,"issues":32,"hierarchy":31,"project_items":32,"views":3}
+expected_state_counts={"labels":16,"issues":34,"hierarchy":31,"project_items":34,"views":3}
 for section,count in expected_state_counts.items():
     if len(state[section])!=count: raise SystemExit(f"state count mismatch: {section}")
 if set(state["hierarchy"])!={f"{p}->{c}" for p,c in edges}: raise SystemExit("hierarchy state keys mismatch")
-print("verified repository=1 labels=15 issues=32 hierarchy=31 project_items=32 views=3")
+print("verified repository=1 labels=16 issues=34 hierarchy=31 project_items=34 views=3")
 PY
 ig_state verified 'final-read-only-verification'
 ```
@@ -2971,11 +3264,11 @@ a successful read-back clears only the current `failed_operation` and `error`.
 | 3–5 | State initialization and atomic helpers | LOCAL WRITE | C/D evidence |
 | 6 | Repository creation, separate push, metadata/topics | LOCAL + REMOTE WRITE | C |
 | 8 | Create/link Project and capture its default-view side effect | REMOTE WRITE | D |
-| 7 | Reconcile and record 15 labels | REMOTE WRITE | D |
+| 7 | Reconcile and record 16 labels | REMOTE WRITE | D |
 | 9 | Create/extract all five Project fields and required options | REMOTE WRITE | D |
-| 10–11 | Create/record master, 8 umbrellas, 23 children | REMOTE WRITE | D |
+| 10A | Create/record M1, 3 umbrellas, 8 epics, 23 subtasks | REMOTE WRITE | D |
 | 12 | Apply and verify 31 hierarchy relationships | REMOTE WRITE | D |
-| 13–14 | Add 32 Project items and populate three fields | REMOTE WRITE | D |
+| 13–14 | Add 34 Project items and populate three fields | REMOTE WRITE | D |
 | 15.1 | Record three pending view lifecycles and stop automation | LOCAL WRITE | D evidence |
 | 15.2 | User configures exactly three views in GitHub UI | USER MANUAL REMOTE WRITE | D |
 | 15.3 | Authenticated UI inspection and verified view-state import | READ-ONLY REMOTE + LOCAL WRITE | D evidence |

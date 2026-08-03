@@ -1,5 +1,12 @@
-# U08 — Documentation and recruiter-ready delivery
+# E08 — Documentation and recruiter-ready delivery
 
+
+## Migration identity
+
+- Canonical identifier: `E08` (GitHub issue type: epic).
+- Legacy identifier: `U08` (retained as `old_identifier`).
+- Parent umbrella: `W03`.
+- Milestone: `M1 — IntentGuard Weekend MVP`.
 ## Objective
 
 Publish concise documentation that lets a reviewer understand, reproduce, operate, verify, and demonstrate exactly what IntentGuard implements and measures.
@@ -10,7 +17,7 @@ The portfolio value depends on clarity and honesty as much as code: results, con
 
 ## Parent identifier
 
-Master issue `[MVP] Deliver IntentGuard Weekend MVP`.
+Umbrella issue `W03` in milestone `M1 — IntentGuard Weekend MVP`.
 
 ## Source task
 
@@ -34,7 +41,7 @@ Summarize and link to the authoritative specification and real outputs. Do not c
 
 ## MUST scope
 
-C08.1 recruiter-facing README; C08.2 operations/status/limitations; C08.3 five-minute delivery path and final consistency review.
+S08.1 recruiter-facing README; S08.2 operations/status/limitations; S08.3 five-minute delivery path and final consistency review.
 
 ## Explicit non-goals
 
@@ -66,11 +73,11 @@ U07 evidence is stable and every published claim has a declared source.
 
 ## Definition of done
 
-C08.1–C08.3 pass, documentation is internally consistent and concise, and the repository is ready for an honest recruiter review.
+S08.1–S08.3 pass, documentation is internally consistent and concise, and the repository is ready for an honest recruiter review.
 
 ## Labels
 
-`type:umbrella`, `priority:MUST`, `area:documentation`
+`type:epic`, `priority:MUST`, `area:documentation`
 
 ## Estimate
 

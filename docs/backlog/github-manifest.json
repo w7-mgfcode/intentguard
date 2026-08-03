@@ -1,5 +1,49 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "migration": {
+    "migration_id": "hierarchy-v2",
+    "from_schema_version": 1,
+    "to_schema_version": 2,
+    "migration_from_manifest_sha256": "c8c1966a7d512f284bc9a96833b50cfa383b6c06ca30f54cb4401df40f335ed8",
+    "hierarchy_version": 2,
+    "milestone_id": "M1",
+    "legacy_master_issue": "MVP",
+    "legacy_umbrella_prefix": "U",
+    "legacy_child_prefix": "C",
+    "canonical_umbrella_prefix": "W",
+    "canonical_epic_prefix": "E",
+    "canonical_subtask_prefix": "S",
+    "old_identifier_policy": "Retain old U/C identifiers on their canonical E/S records; no remote master issue is created.",
+    "old_inventory": {
+      "milestones": 0,
+      "master_issues": 1,
+      "umbrellas": 8,
+      "children": 23,
+      "total_issues": 32,
+      "relationships": 31,
+      "project_items": 32,
+      "managed_labels": 15
+    },
+    "new_inventory": {
+      "milestones": 1,
+      "umbrellas": 3,
+      "epics": 8,
+      "subtasks": 23,
+      "total_issues": 34,
+      "relationships": 31,
+      "project_items": 34,
+      "managed_labels": 16
+    }
+  },
+  "milestone": {
+    "id": "M1",
+    "title": "IntentGuard Weekend MVP",
+    "source_file": "docs/backlog/MASTER_ISSUE.md",
+    "source_sha256": "a8653d3787d39892e0cc02ca37944057961886553f671882e11646b652536589",
+    "issue_count": 34,
+    "canonical_type": "milestone",
+    "deterministic_description_contract": "UTF-8 bytes of source_file, passed unchanged as the milestone description."
+  },
   "repository": {
     "owner": "w7-mgfcode",
     "name": "intentguard",
@@ -22,92 +66,1443 @@
     ]
   },
   "labels": [
-    {"name": "type:umbrella", "color": "5319E7", "description": "Parent issue coordinating one MUST task"},
-    {"name": "type:task", "color": "1D76DB", "description": "Implementable child or defect"},
-    {"name": "priority:MUST", "color": "B60205", "description": "Required for strict Weekend MVP"},
-    {"name": "priority:SHOULD", "color": "FBCA04", "description": "Valuable after strict MVP if time permits"},
-    {"name": "priority:STRETCH", "color": "0E8A16", "description": "Weekend stretch only"},
-    {"name": "priority:POST-WEEKEND", "color": "6E7781", "description": "Explicitly outside Weekend MVP"},
-    {"name": "area:foundation", "color": "C5DEF5", "description": "Packaging, commands, configuration, and repository rules"},
-    {"name": "area:data", "color": "0052CC", "description": "Dataset loading, validation, splits, and provenance"},
-    {"name": "area:baseline", "color": "0E8A16", "description": "TF-IDF logistic-regression baseline"},
-    {"name": "area:model", "color": "5319E7", "description": "Transformer training and immutable artifacts"},
-    {"name": "area:evaluation", "color": "D4C5F9", "description": "Metrics, calibration, selective prediction, and reports"},
-    {"name": "area:api", "color": "1D76DB", "description": "Typed FastAPI inference and demo"},
-    {"name": "area:quality", "color": "BFDADC", "description": "Test, CI, acceptance, and quality gates"},
-    {"name": "area:documentation", "color": "0075CA", "description": "README, operations, limitations, and delivery evidence"},
-    {"name": "status:blocked", "color": "D93F0B", "description": "Cannot proceed under current prerequisites or constraints"}
+    {
+      "name": "type:umbrella",
+      "color": "5319E7",
+      "description": "Parent issue coordinating one MUST task"
+    },
+    {
+      "name": "type:subtask",
+      "color": "1D76DB",
+      "description": "Atomic MUST implementation task under an epic"
+    },
+    {
+      "name": "type:epic",
+      "color": "6F42C1",
+      "description": "Substantial MUST deliverable under a canonical umbrella"
+    },
+    {
+      "name": "priority:MUST",
+      "color": "B60205",
+      "description": "Required for strict Weekend MVP"
+    },
+    {
+      "name": "priority:SHOULD",
+      "color": "FBCA04",
+      "description": "Valuable after strict MVP if time permits"
+    },
+    {
+      "name": "priority:STRETCH",
+      "color": "0E8A16",
+      "description": "Weekend stretch only"
+    },
+    {
+      "name": "priority:POST-WEEKEND",
+      "color": "6E7781",
+      "description": "Explicitly outside Weekend MVP"
+    },
+    {
+      "name": "area:foundation",
+      "color": "C5DEF5",
+      "description": "Packaging, commands, configuration, and repository rules"
+    },
+    {
+      "name": "area:data",
+      "color": "0052CC",
+      "description": "Dataset loading, validation, splits, and provenance"
+    },
+    {
+      "name": "area:baseline",
+      "color": "0E8A16",
+      "description": "TF-IDF logistic-regression baseline"
+    },
+    {
+      "name": "area:model",
+      "color": "5319E7",
+      "description": "Transformer training and immutable artifacts"
+    },
+    {
+      "name": "area:evaluation",
+      "color": "D4C5F9",
+      "description": "Metrics, calibration, selective prediction, and reports"
+    },
+    {
+      "name": "area:api",
+      "color": "1D76DB",
+      "description": "Typed FastAPI inference and demo"
+    },
+    {
+      "name": "area:quality",
+      "color": "BFDADC",
+      "description": "Test, CI, acceptance, and quality gates"
+    },
+    {
+      "name": "area:documentation",
+      "color": "0075CA",
+      "description": "README, operations, limitations, and delivery evidence"
+    },
+    {
+      "name": "status:blocked",
+      "color": "D93F0B",
+      "description": "Cannot proceed under current prerequisites or constraints"
+    }
   ],
   "project": {
     "title": "IntentGuard — Weekend MVP",
     "visibility": "public",
     "fields": [
-      {"name": "Status", "type": "built-in-single-select", "options": ["Backlog", "Ready", "In progress", "Review", "Done"]},
-      {"name": "Priority", "type": "single-select", "options": ["MUST", "SHOULD", "STRETCH", "POST-WEEKEND"]},
-      {"name": "Estimate", "type": "number", "unit": "hours"},
-      {"name": "Parent issue", "type": "built-in-hierarchy"},
-      {"name": "Sub-issue progress", "type": "built-in-progress"}
+      {
+        "name": "Status",
+        "type": "built-in-single-select",
+        "options": [
+          "Backlog",
+          "Ready",
+          "In progress",
+          "Review",
+          "Done"
+        ]
+      },
+      {
+        "name": "Priority",
+        "type": "single-select",
+        "options": [
+          "MUST",
+          "SHOULD",
+          "STRETCH",
+          "POST-WEEKEND"
+        ]
+      },
+      {
+        "name": "Estimate",
+        "type": "number",
+        "unit": "hours"
+      },
+      {
+        "name": "Parent issue",
+        "type": "built-in-hierarchy"
+      },
+      {
+        "name": "Sub-issue progress",
+        "type": "built-in-progress"
+      }
     ],
     "views": [
-      {"name": "MVP Board", "layout": "board", "filter": "Priority:MUST", "group_by": "Status", "sort": ["Priority", "Estimate"]},
-      {"name": "Full Backlog", "layout": "table", "filter": "all real issues", "columns": ["Status", "Priority", "Parent issue", "Estimate", "Labels"], "sort": ["Priority", "Parent issue", "Title"]},
-      {"name": "Umbrella Progress", "layout": "table", "filter": "label:type:umbrella", "columns": ["Status", "Priority", "Estimate", "Sub-issue progress"], "sort": ["Title"]}
-    ]
+      {
+        "name": "MVP Board",
+        "layout": "board",
+        "filter": "Priority:MUST",
+        "group_by": "Status",
+        "sort": [
+          "Priority",
+          "Estimate"
+        ],
+        "purpose": "Smallest actionable strict-MVP view over all managed milestone issues."
+      },
+      {
+        "name": "Full Backlog",
+        "layout": "table",
+        "filter": "all real issues",
+        "columns": [
+          "Status",
+          "Priority",
+          "Parent issue",
+          "Estimate",
+          "Labels"
+        ],
+        "sort": [
+          "Priority",
+          "Parent issue",
+          "Title"
+        ],
+        "purpose": "Inspect all 34 created issues without mixing in parking-lot prose."
+      },
+      {
+        "name": "Umbrella Progress",
+        "layout": "table",
+        "filter": "label:type:umbrella",
+        "columns": [
+          "Status",
+          "Priority",
+          "Estimate",
+          "Sub-issue progress"
+        ],
+        "sort": [
+          "Title"
+        ],
+        "purpose": "Compact progress over W01–W03 only."
+      }
+    ],
+    "managed_item_count": 34,
+    "estimate_rollup_semantics": "Manifest-derived: subtask direct estimates are authoritative; epic and umbrella expected_rollup values are sums of direct children. GitHub does not compute these values automatically; the runbook verifies the manifest values remotely."
   },
   "issues": [
-    {"id": "MVP", "title": "[MVP] Deliver IntentGuard Weekend MVP", "type": "master", "parent": null, "body_file": "docs/backlog/MASTER_ISSUE.md", "priority": "MUST", "labels": ["type:umbrella", "priority:MUST"], "estimate_hours": 16.0, "creation_order": 1},
-    {"id": "U01", "title": "U01 — Project foundation and reproducibility", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U01-project-foundation.md", "priority": "MUST", "area": "foundation", "estimate_hours": 1.0, "creation_order": 2},
-    {"id": "U02", "title": "U02 — BANKING77 data contract", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U02-banking77-data-contract.md", "priority": "MUST", "area": "data", "estimate_hours": 2.0, "creation_order": 3},
-    {"id": "U03", "title": "U03 — TF-IDF logistic-regression baseline", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U03-tfidf-baseline.md", "priority": "MUST", "area": "baseline", "estimate_hours": 3.0, "creation_order": 4},
-    {"id": "U04", "title": "U04 — DistilBERT training and immutable artifact", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U04-distilbert-artifact.md", "priority": "MUST", "area": "model", "estimate_hours": 3.0, "creation_order": 5},
-    {"id": "U05", "title": "U05 — Comparative evaluation and selective prediction", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U05-evaluation-selective-prediction.md", "priority": "MUST", "area": "evaluation", "estimate_hours": 2.0, "creation_order": 6},
-    {"id": "U06", "title": "U06 — FastAPI inference and real-artifact demo", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U06-fastapi-demo.md", "priority": "MUST", "area": "api", "estimate_hours": 2.0, "creation_order": 7},
-    {"id": "U07", "title": "U07 — Full validation and acceptance gate", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U07-full-validation.md", "priority": "MUST", "area": "quality", "estimate_hours": 1.5, "creation_order": 8},
-    {"id": "U08", "title": "U08 — Documentation and recruiter-ready delivery", "type": "umbrella", "parent": "MVP", "body_file": "docs/backlog/umbrellas/U08-documentation-delivery.md", "priority": "MUST", "area": "documentation", "estimate_hours": 1.5, "creation_order": 9},
-    {"id": "C01.1", "title": "C01.1 — Establish agent governance and repository skeleton", "type": "task", "parent": "U01", "body_file": "docs/backlog/tasks/C01.1-agent-instructions-skeleton.md", "priority": "MUST", "area": "foundation", "estimate_hours": 0.25, "creation_order": 10},
-    {"id": "C01.2", "title": "C01.2 — Configure Python packaging, lockfile, and reviewed defaults", "type": "task", "parent": "U01", "body_file": "docs/backlog/tasks/C01.2-python-packaging-lock-config.md", "priority": "MUST", "area": "foundation", "estimate_hours": 0.5, "creation_order": 11},
-    {"id": "C01.3", "title": "C01.3 — Establish Make, CI, collaboration, and foundation validation contracts", "type": "task", "parent": "U01", "body_file": "docs/backlog/tasks/C01.3-make-ci-collaboration.md", "priority": "MUST", "area": "foundation", "estimate_hours": 0.25, "creation_order": 12},
-    {"id": "C02.1", "title": "C02.1 — Pin and implement the BANKING77 loader", "type": "task", "parent": "U02", "body_file": "docs/backlog/tasks/C02.1-pin-banking77-loader.md", "priority": "MUST", "area": "data", "estimate_hours": 0.5, "creation_order": 13},
-    {"id": "C02.2", "title": "C02.2 — Validate canonical splits, label mapping, and provenance", "type": "task", "parent": "U02", "body_file": "docs/backlog/tasks/C02.2-canonical-splits-provenance.md", "priority": "MUST", "area": "data", "estimate_hours": 0.75, "creation_order": 14},
-    {"id": "C02.3", "title": "C02.3 — Integrate make data and enforce the data contract", "type": "task", "parent": "U02", "body_file": "docs/backlog/tasks/C02.3-data-command-contract-tests.md", "priority": "MUST", "area": "data", "estimate_hours": 0.75, "creation_order": 15},
-    {"id": "C03.1", "title": "C03.1 — Implement the TF-IDF logistic-regression baseline", "type": "task", "parent": "U03", "body_file": "docs/backlog/tasks/C03.1-tfidf-logistic-baseline.md", "priority": "MUST", "area": "baseline", "estimate_hours": 1.25, "creation_order": 16},
-    {"id": "C03.2", "title": "C03.2 — Persist and reload the baseline artifact with parity", "type": "task", "parent": "U03", "body_file": "docs/backlog/tasks/C03.2-baseline-artifact-parity.md", "priority": "MUST", "area": "baseline", "estimate_hours": 0.75, "creation_order": 17},
-    {"id": "C03.3", "title": "C03.3 — Measure the baseline and lock metric regression", "type": "task", "parent": "U03", "body_file": "docs/backlog/tasks/C03.3-baseline-report-metric-regression.md", "priority": "MUST", "area": "baseline", "estimate_hours": 1.0, "creation_order": 18},
-    {"id": "C04.1", "title": "C04.1 — Verify the DistilBERT training environment and forward pass", "type": "task", "parent": "U04", "body_file": "docs/backlog/tasks/C04.1-distilbert-environment-smoke.md", "priority": "MUST", "area": "model", "estimate_hours": 0.5, "creation_order": 19},
-    {"id": "C04.2", "title": "C04.2 — Fine-tune DistilBERT and produce validation predictions", "type": "task", "parent": "U04", "body_file": "docs/backlog/tasks/C04.2-finetune-validation-predictions.md", "priority": "MUST", "area": "model", "estimate_hours": 1.25, "creation_order": 20},
-    {"id": "C04.3", "title": "C04.3 — Select the validation threshold and finalize the immutable artifact", "type": "task", "parent": "U04", "body_file": "docs/backlog/tasks/C04.3-threshold-immutable-artifact.md", "priority": "MUST", "area": "model", "estimate_hours": 1.25, "creation_order": 21},
-    {"id": "C05.1", "title": "C05.1 — Produce comparable baseline and transformer classification metrics", "type": "task", "parent": "U05", "body_file": "docs/backlog/tasks/C05.1-comparable-classification-metrics.md", "priority": "MUST", "area": "evaluation", "estimate_hours": 0.75, "creation_order": 22},
-    {"id": "C05.2", "title": "C05.2 — Measure calibration, selective prediction, and latency", "type": "task", "parent": "U05", "body_file": "docs/backlog/tasks/C05.2-calibration-selective-latency.md", "priority": "MUST", "area": "evaluation", "estimate_hours": 0.75, "creation_order": 23},
-    {"id": "C05.3", "title": "C05.3 — Evaluate the unsupported-request fixture separately", "type": "task", "parent": "U05", "body_file": "docs/backlog/tasks/C05.3-unsupported-fixture-report.md", "priority": "MUST", "area": "evaluation", "estimate_hours": 0.5, "creation_order": 24},
-    {"id": "C06.1", "title": "C06.1 — Implement API schemas, stable errors, request IDs, and safe logging", "type": "task", "parent": "U06", "body_file": "docs/backlog/tasks/C06.1-api-schemas-errors-logging.md", "priority": "MUST", "area": "api", "estimate_hours": 0.5, "creation_order": 25},
-    {"id": "C06.2", "title": "C06.2 — Load the artifact and implement health and prediction endpoints", "type": "task", "parent": "U06", "body_file": "docs/backlog/tasks/C06.2-predictor-health-predict.md", "priority": "MUST", "area": "api", "estimate_hours": 1.0, "creation_order": 26},
-    {"id": "C06.3", "title": "C06.3 — Deliver the strict real-artifact demonstration", "type": "task", "parent": "U06", "body_file": "docs/backlog/tasks/C06.3-real-artifact-demo.md", "priority": "MUST", "area": "api", "estimate_hours": 0.5, "creation_order": 27},
-    {"id": "C07.1", "title": "C07.1 — Orchestrate the full CPU validation suite", "type": "task", "parent": "U07", "body_file": "docs/backlog/tasks/C07.1-cpu-suite-validation-orchestration.md", "priority": "MUST", "area": "quality", "estimate_hours": 0.75, "creation_order": 28},
-    {"id": "C07.2", "title": "C07.2 — Audit acceptance criteria and issue the Sunday verdict", "type": "task", "parent": "U07", "body_file": "docs/backlog/tasks/C07.2-acceptance-status-audit.md", "priority": "MUST", "area": "quality", "estimate_hours": 0.75, "creation_order": 29},
-    {"id": "C08.1", "title": "C08.1 — Publish the recruiter-facing README", "type": "task", "parent": "U08", "body_file": "docs/backlog/tasks/C08.1-recruiter-readme.md", "priority": "MUST", "area": "documentation", "estimate_hours": 0.5, "creation_order": 30},
-    {"id": "C08.2", "title": "C08.2 — Finalize operations, implementation status, and limitations", "type": "task", "parent": "U08", "body_file": "docs/backlog/tasks/C08.2-operations-status-limitations.md", "priority": "MUST", "area": "documentation", "estimate_hours": 0.5, "creation_order": 31},
-    {"id": "C08.3", "title": "C08.3 — Validate the five-minute delivery path", "type": "task", "parent": "U08", "body_file": "docs/backlog/tasks/C08.3-five-minute-delivery.md", "priority": "MUST", "area": "documentation", "estimate_hours": 0.5, "creation_order": 32}
+    {
+      "id": "W01",
+      "title": "W01 — Foundation and Data",
+      "type": "umbrella",
+      "parent": null,
+      "body_file": "docs/backlog/umbrellas/W01-foundation-and-data.md",
+      "priority": "MUST",
+      "area": "foundation",
+      "labels": [
+        "type:umbrella",
+        "priority:MUST"
+      ],
+      "estimate_hours": 3,
+      "creation_order": 1,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "E01",
+        "E02"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 3
+    },
+    {
+      "id": "W02",
+      "title": "W02 — Modeling and Evaluation",
+      "type": "umbrella",
+      "parent": null,
+      "body_file": "docs/backlog/umbrellas/W02-modeling-and-evaluation.md",
+      "priority": "MUST",
+      "area": "model",
+      "labels": [
+        "type:umbrella",
+        "priority:MUST"
+      ],
+      "estimate_hours": 8,
+      "creation_order": 2,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "E03",
+        "E04",
+        "E05"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 8
+    },
+    {
+      "id": "W03",
+      "title": "W03 — Serving and Delivery",
+      "type": "umbrella",
+      "parent": null,
+      "body_file": "docs/backlog/umbrellas/W03-serving-and-delivery.md",
+      "priority": "MUST",
+      "area": "api",
+      "labels": [
+        "type:umbrella",
+        "priority:MUST"
+      ],
+      "estimate_hours": 5,
+      "creation_order": 3,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "E06",
+        "E07",
+        "E08"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 5
+    },
+    {
+      "id": "E01",
+      "old_identifier": "U01",
+      "title": "E01 — Project foundation and reproducibility",
+      "type": "epic",
+      "parent": "W01",
+      "body_file": "docs/backlog/umbrellas/U01-project-foundation.md",
+      "priority": "MUST",
+      "area": "foundation",
+      "labels": [
+        "type:epic",
+        "priority:MUST",
+        "area:foundation"
+      ],
+      "estimate_hours": 1,
+      "creation_order": 4,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "S01.1",
+        "S01.2",
+        "S01.3"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 1
+    },
+    {
+      "id": "E02",
+      "old_identifier": "U02",
+      "title": "E02 — BANKING77 data contract",
+      "type": "epic",
+      "parent": "W01",
+      "body_file": "docs/backlog/umbrellas/U02-banking77-data-contract.md",
+      "priority": "MUST",
+      "area": "data",
+      "labels": [
+        "type:epic",
+        "priority:MUST",
+        "area:data"
+      ],
+      "estimate_hours": 2,
+      "creation_order": 5,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "S02.1",
+        "S02.2",
+        "S02.3"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 2
+    },
+    {
+      "id": "E03",
+      "old_identifier": "U03",
+      "title": "E03 — TF-IDF logistic-regression baseline",
+      "type": "epic",
+      "parent": "W02",
+      "body_file": "docs/backlog/umbrellas/U03-tfidf-baseline.md",
+      "priority": "MUST",
+      "area": "baseline",
+      "labels": [
+        "type:epic",
+        "priority:MUST",
+        "area:baseline"
+      ],
+      "estimate_hours": 3,
+      "creation_order": 6,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "S03.1",
+        "S03.2",
+        "S03.3"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 3
+    },
+    {
+      "id": "E04",
+      "old_identifier": "U04",
+      "title": "E04 — DistilBERT training and immutable artifact",
+      "type": "epic",
+      "parent": "W02",
+      "body_file": "docs/backlog/umbrellas/U04-distilbert-artifact.md",
+      "priority": "MUST",
+      "area": "model",
+      "labels": [
+        "type:epic",
+        "priority:MUST",
+        "area:model"
+      ],
+      "estimate_hours": 3,
+      "creation_order": 7,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "S04.1",
+        "S04.2",
+        "S04.3"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 3
+    },
+    {
+      "id": "E05",
+      "old_identifier": "U05",
+      "title": "E05 — Comparative evaluation and selective prediction",
+      "type": "epic",
+      "parent": "W02",
+      "body_file": "docs/backlog/umbrellas/U05-evaluation-selective-prediction.md",
+      "priority": "MUST",
+      "area": "evaluation",
+      "labels": [
+        "type:epic",
+        "priority:MUST",
+        "area:evaluation"
+      ],
+      "estimate_hours": 2,
+      "creation_order": 8,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "S05.1",
+        "S05.2",
+        "S05.3"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 2
+    },
+    {
+      "id": "E06",
+      "old_identifier": "U06",
+      "title": "E06 — FastAPI inference and real-artifact demo",
+      "type": "epic",
+      "parent": "W03",
+      "body_file": "docs/backlog/umbrellas/U06-fastapi-demo.md",
+      "priority": "MUST",
+      "area": "api",
+      "labels": [
+        "type:epic",
+        "priority:MUST",
+        "area:api"
+      ],
+      "estimate_hours": 2,
+      "creation_order": 9,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "S06.1",
+        "S06.2",
+        "S06.3"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 2
+    },
+    {
+      "id": "E07",
+      "old_identifier": "U07",
+      "title": "E07 — Full validation and acceptance gate",
+      "type": "epic",
+      "parent": "W03",
+      "body_file": "docs/backlog/umbrellas/U07-full-validation.md",
+      "priority": "MUST",
+      "area": "quality",
+      "labels": [
+        "type:epic",
+        "priority:MUST",
+        "area:quality"
+      ],
+      "estimate_hours": 1.5,
+      "creation_order": 10,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "S07.1",
+        "S07.2"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 1.5
+    },
+    {
+      "id": "E08",
+      "old_identifier": "U08",
+      "title": "E08 — Documentation and recruiter-ready delivery",
+      "type": "epic",
+      "parent": "W03",
+      "body_file": "docs/backlog/umbrellas/U08-documentation-delivery.md",
+      "priority": "MUST",
+      "area": "documentation",
+      "labels": [
+        "type:epic",
+        "priority:MUST",
+        "area:documentation"
+      ],
+      "estimate_hours": 1.5,
+      "creation_order": 11,
+      "milestone_id": "M1",
+      "rollup_children": [
+        "S08.1",
+        "S08.2",
+        "S08.3"
+      ],
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 1.5
+    },
+    {
+      "id": "S01.1",
+      "old_identifier": "C01.1",
+      "title": "S01.1 — Establish agent governance and repository skeleton",
+      "type": "subtask",
+      "parent": "E01",
+      "body_file": "docs/backlog/tasks/C01.1-agent-instructions-skeleton.md",
+      "priority": "MUST",
+      "area": "foundation",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:foundation"
+      ],
+      "estimate_hours": 0.25,
+      "creation_order": 12,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S01.2",
+      "old_identifier": "C01.2",
+      "title": "S01.2 — Configure Python packaging, lockfile, and reviewed defaults",
+      "type": "subtask",
+      "parent": "E01",
+      "body_file": "docs/backlog/tasks/C01.2-python-packaging-lock-config.md",
+      "priority": "MUST",
+      "area": "foundation",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:foundation"
+      ],
+      "estimate_hours": 0.5,
+      "creation_order": 13,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S01.3",
+      "old_identifier": "C01.3",
+      "title": "S01.3 — Establish Make, CI, collaboration, and foundation validation contracts",
+      "type": "subtask",
+      "parent": "E01",
+      "body_file": "docs/backlog/tasks/C01.3-make-ci-collaboration.md",
+      "priority": "MUST",
+      "area": "foundation",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:foundation"
+      ],
+      "estimate_hours": 0.25,
+      "creation_order": 14,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S02.1",
+      "old_identifier": "C02.1",
+      "title": "S02.1 — Pin and implement the BANKING77 loader",
+      "type": "subtask",
+      "parent": "E02",
+      "body_file": "docs/backlog/tasks/C02.1-pin-banking77-loader.md",
+      "priority": "MUST",
+      "area": "data",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:data"
+      ],
+      "estimate_hours": 0.5,
+      "creation_order": 15,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S02.2",
+      "old_identifier": "C02.2",
+      "title": "S02.2 — Validate canonical splits, label mapping, and provenance",
+      "type": "subtask",
+      "parent": "E02",
+      "body_file": "docs/backlog/tasks/C02.2-canonical-splits-provenance.md",
+      "priority": "MUST",
+      "area": "data",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:data"
+      ],
+      "estimate_hours": 0.75,
+      "creation_order": 16,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S02.3",
+      "old_identifier": "C02.3",
+      "title": "S02.3 — Integrate make data and enforce the data contract",
+      "type": "subtask",
+      "parent": "E02",
+      "body_file": "docs/backlog/tasks/C02.3-data-command-contract-tests.md",
+      "priority": "MUST",
+      "area": "data",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:data"
+      ],
+      "estimate_hours": 0.75,
+      "creation_order": 17,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S03.1",
+      "old_identifier": "C03.1",
+      "title": "S03.1 — Implement the TF-IDF logistic-regression baseline",
+      "type": "subtask",
+      "parent": "E03",
+      "body_file": "docs/backlog/tasks/C03.1-tfidf-logistic-baseline.md",
+      "priority": "MUST",
+      "area": "baseline",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:baseline"
+      ],
+      "estimate_hours": 1.25,
+      "creation_order": 18,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S03.2",
+      "old_identifier": "C03.2",
+      "title": "S03.2 — Persist and reload the baseline artifact with parity",
+      "type": "subtask",
+      "parent": "E03",
+      "body_file": "docs/backlog/tasks/C03.2-baseline-artifact-parity.md",
+      "priority": "MUST",
+      "area": "baseline",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:baseline"
+      ],
+      "estimate_hours": 0.75,
+      "creation_order": 19,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S03.3",
+      "old_identifier": "C03.3",
+      "title": "S03.3 — Measure the baseline and lock metric regression",
+      "type": "subtask",
+      "parent": "E03",
+      "body_file": "docs/backlog/tasks/C03.3-baseline-report-metric-regression.md",
+      "priority": "MUST",
+      "area": "baseline",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:baseline"
+      ],
+      "estimate_hours": 1,
+      "creation_order": 20,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S04.1",
+      "old_identifier": "C04.1",
+      "title": "S04.1 — Verify the DistilBERT training environment and forward pass",
+      "type": "subtask",
+      "parent": "E04",
+      "body_file": "docs/backlog/tasks/C04.1-distilbert-environment-smoke.md",
+      "priority": "MUST",
+      "area": "model",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:model"
+      ],
+      "estimate_hours": 0.5,
+      "creation_order": 21,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S04.2",
+      "old_identifier": "C04.2",
+      "title": "S04.2 — Fine-tune DistilBERT and produce validation predictions",
+      "type": "subtask",
+      "parent": "E04",
+      "body_file": "docs/backlog/tasks/C04.2-finetune-validation-predictions.md",
+      "priority": "MUST",
+      "area": "model",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:model"
+      ],
+      "estimate_hours": 1.25,
+      "creation_order": 22,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S04.3",
+      "old_identifier": "C04.3",
+      "title": "S04.3 — Select the validation threshold and finalize the immutable artifact",
+      "type": "subtask",
+      "parent": "E04",
+      "body_file": "docs/backlog/tasks/C04.3-threshold-immutable-artifact.md",
+      "priority": "MUST",
+      "area": "model",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:model"
+      ],
+      "estimate_hours": 1.25,
+      "creation_order": 23,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S05.1",
+      "old_identifier": "C05.1",
+      "title": "S05.1 — Produce comparable baseline and transformer classification metrics",
+      "type": "subtask",
+      "parent": "E05",
+      "body_file": "docs/backlog/tasks/C05.1-comparable-classification-metrics.md",
+      "priority": "MUST",
+      "area": "evaluation",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:evaluation"
+      ],
+      "estimate_hours": 0.75,
+      "creation_order": 24,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S05.2",
+      "old_identifier": "C05.2",
+      "title": "S05.2 — Measure calibration, selective prediction, and latency",
+      "type": "subtask",
+      "parent": "E05",
+      "body_file": "docs/backlog/tasks/C05.2-calibration-selective-latency.md",
+      "priority": "MUST",
+      "area": "evaluation",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:evaluation"
+      ],
+      "estimate_hours": 0.75,
+      "creation_order": 25,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S05.3",
+      "old_identifier": "C05.3",
+      "title": "S05.3 — Evaluate the unsupported-request fixture separately",
+      "type": "subtask",
+      "parent": "E05",
+      "body_file": "docs/backlog/tasks/C05.3-unsupported-fixture-report.md",
+      "priority": "MUST",
+      "area": "evaluation",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:evaluation"
+      ],
+      "estimate_hours": 0.5,
+      "creation_order": 26,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S06.1",
+      "old_identifier": "C06.1",
+      "title": "S06.1 — Implement API schemas, stable errors, request IDs, and safe logging",
+      "type": "subtask",
+      "parent": "E06",
+      "body_file": "docs/backlog/tasks/C06.1-api-schemas-errors-logging.md",
+      "priority": "MUST",
+      "area": "api",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:api"
+      ],
+      "estimate_hours": 0.5,
+      "creation_order": 27,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S06.2",
+      "old_identifier": "C06.2",
+      "title": "S06.2 — Load the artifact and implement health and prediction endpoints",
+      "type": "subtask",
+      "parent": "E06",
+      "body_file": "docs/backlog/tasks/C06.2-predictor-health-predict.md",
+      "priority": "MUST",
+      "area": "api",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:api"
+      ],
+      "estimate_hours": 1,
+      "creation_order": 28,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S06.3",
+      "old_identifier": "C06.3",
+      "title": "S06.3 — Deliver the strict real-artifact demonstration",
+      "type": "subtask",
+      "parent": "E06",
+      "body_file": "docs/backlog/tasks/C06.3-real-artifact-demo.md",
+      "priority": "MUST",
+      "area": "api",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:api"
+      ],
+      "estimate_hours": 0.5,
+      "creation_order": 29,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S07.1",
+      "old_identifier": "C07.1",
+      "title": "S07.1 — Orchestrate the full CPU validation suite",
+      "type": "subtask",
+      "parent": "E07",
+      "body_file": "docs/backlog/tasks/C07.1-cpu-suite-validation-orchestration.md",
+      "priority": "MUST",
+      "area": "quality",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:quality"
+      ],
+      "estimate_hours": 0.75,
+      "creation_order": 30,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S07.2",
+      "old_identifier": "C07.2",
+      "title": "S07.2 — Audit acceptance criteria and issue the Sunday verdict",
+      "type": "subtask",
+      "parent": "E07",
+      "body_file": "docs/backlog/tasks/C07.2-acceptance-status-audit.md",
+      "priority": "MUST",
+      "area": "quality",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:quality"
+      ],
+      "estimate_hours": 0.75,
+      "creation_order": 31,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S08.1",
+      "old_identifier": "C08.1",
+      "title": "S08.1 — Publish the recruiter-facing README",
+      "type": "subtask",
+      "parent": "E08",
+      "body_file": "docs/backlog/tasks/C08.1-recruiter-readme.md",
+      "priority": "MUST",
+      "area": "documentation",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:documentation"
+      ],
+      "estimate_hours": 0.5,
+      "creation_order": 32,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S08.2",
+      "old_identifier": "C08.2",
+      "title": "S08.2 — Finalize operations, implementation status, and limitations",
+      "type": "subtask",
+      "parent": "E08",
+      "body_file": "docs/backlog/tasks/C08.2-operations-status-limitations.md",
+      "priority": "MUST",
+      "area": "documentation",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:documentation"
+      ],
+      "estimate_hours": 0.5,
+      "creation_order": 33,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    },
+    {
+      "id": "S08.3",
+      "old_identifier": "C08.3",
+      "title": "S08.3 — Validate the five-minute delivery path",
+      "type": "subtask",
+      "parent": "E08",
+      "body_file": "docs/backlog/tasks/C08.3-five-minute-delivery.md",
+      "priority": "MUST",
+      "area": "documentation",
+      "labels": [
+        "type:subtask",
+        "priority:MUST",
+        "area:documentation"
+      ],
+      "estimate_hours": 0.5,
+      "creation_order": 34,
+      "milestone_id": "M1",
+      "rollup_children": [],
+      "estimate_kind": "direct",
+      "expected_rollup": null
+    }
   ],
   "relationships": [
-    {"parent": "MVP", "children": ["U01", "U02", "U03", "U04", "U05", "U06", "U07", "U08"]},
-    {"parent": "U01", "children": ["C01.1", "C01.2", "C01.3"]},
-    {"parent": "U02", "children": ["C02.1", "C02.2", "C02.3"]},
-    {"parent": "U03", "children": ["C03.1", "C03.2", "C03.3"]},
-    {"parent": "U04", "children": ["C04.1", "C04.2", "C04.3"]},
-    {"parent": "U05", "children": ["C05.1", "C05.2", "C05.3"]},
-    {"parent": "U06", "children": ["C06.1", "C06.2", "C06.3"]},
-    {"parent": "U07", "children": ["C07.1", "C07.2"]},
-    {"parent": "U08", "children": ["C08.1", "C08.2", "C08.3"]}
+    {
+      "parent": "W01",
+      "child": "E01",
+      "relationship_type": "umbrella-epic"
+    },
+    {
+      "parent": "W01",
+      "child": "E02",
+      "relationship_type": "umbrella-epic"
+    },
+    {
+      "parent": "W02",
+      "child": "E03",
+      "relationship_type": "umbrella-epic"
+    },
+    {
+      "parent": "W02",
+      "child": "E04",
+      "relationship_type": "umbrella-epic"
+    },
+    {
+      "parent": "W02",
+      "child": "E05",
+      "relationship_type": "umbrella-epic"
+    },
+    {
+      "parent": "W03",
+      "child": "E06",
+      "relationship_type": "umbrella-epic"
+    },
+    {
+      "parent": "W03",
+      "child": "E07",
+      "relationship_type": "umbrella-epic"
+    },
+    {
+      "parent": "W03",
+      "child": "E08",
+      "relationship_type": "umbrella-epic"
+    },
+    {
+      "parent": "E01",
+      "child": "S01.1",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E01",
+      "child": "S01.2",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E01",
+      "child": "S01.3",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E02",
+      "child": "S02.1",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E02",
+      "child": "S02.2",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E02",
+      "child": "S02.3",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E03",
+      "child": "S03.1",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E03",
+      "child": "S03.2",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E03",
+      "child": "S03.3",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E04",
+      "child": "S04.1",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E04",
+      "child": "S04.2",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E04",
+      "child": "S04.3",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E05",
+      "child": "S05.1",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E05",
+      "child": "S05.2",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E05",
+      "child": "S05.3",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E06",
+      "child": "S06.1",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E06",
+      "child": "S06.2",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E06",
+      "child": "S06.3",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E07",
+      "child": "S07.1",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E07",
+      "child": "S07.2",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E08",
+      "child": "S08.1",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E08",
+      "child": "S08.2",
+      "relationship_type": "epic-subtask"
+    },
+    {
+      "parent": "E08",
+      "child": "S08.3",
+      "relationship_type": "epic-subtask"
+    }
+  ],
+  "project_items": [
+    {
+      "id": "W01",
+      "priority": "MUST",
+      "estimate_hours": 3,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 3,
+      "rollup_children": [
+        "E01",
+        "E02"
+      ]
+    },
+    {
+      "id": "W02",
+      "priority": "MUST",
+      "estimate_hours": 8,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 8,
+      "rollup_children": [
+        "E03",
+        "E04",
+        "E05"
+      ]
+    },
+    {
+      "id": "W03",
+      "priority": "MUST",
+      "estimate_hours": 5,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 5,
+      "rollup_children": [
+        "E06",
+        "E07",
+        "E08"
+      ]
+    },
+    {
+      "id": "E01",
+      "priority": "MUST",
+      "estimate_hours": 1,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 1,
+      "rollup_children": [
+        "S01.1",
+        "S01.2",
+        "S01.3"
+      ]
+    },
+    {
+      "id": "E02",
+      "priority": "MUST",
+      "estimate_hours": 2,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 2,
+      "rollup_children": [
+        "S02.1",
+        "S02.2",
+        "S02.3"
+      ]
+    },
+    {
+      "id": "E03",
+      "priority": "MUST",
+      "estimate_hours": 3,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 3,
+      "rollup_children": [
+        "S03.1",
+        "S03.2",
+        "S03.3"
+      ]
+    },
+    {
+      "id": "E04",
+      "priority": "MUST",
+      "estimate_hours": 3,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 3,
+      "rollup_children": [
+        "S04.1",
+        "S04.2",
+        "S04.3"
+      ]
+    },
+    {
+      "id": "E05",
+      "priority": "MUST",
+      "estimate_hours": 2,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 2,
+      "rollup_children": [
+        "S05.1",
+        "S05.2",
+        "S05.3"
+      ]
+    },
+    {
+      "id": "E06",
+      "priority": "MUST",
+      "estimate_hours": 2,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 2,
+      "rollup_children": [
+        "S06.1",
+        "S06.2",
+        "S06.3"
+      ]
+    },
+    {
+      "id": "E07",
+      "priority": "MUST",
+      "estimate_hours": 1.5,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 1.5,
+      "rollup_children": [
+        "S07.1",
+        "S07.2"
+      ]
+    },
+    {
+      "id": "E08",
+      "priority": "MUST",
+      "estimate_hours": 1.5,
+      "status": "Backlog",
+      "estimate_kind": "derived-rollup",
+      "expected_rollup": 1.5,
+      "rollup_children": [
+        "S08.1",
+        "S08.2",
+        "S08.3"
+      ]
+    },
+    {
+      "id": "S01.1",
+      "priority": "MUST",
+      "estimate_hours": 0.25,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S01.2",
+      "priority": "MUST",
+      "estimate_hours": 0.5,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S01.3",
+      "priority": "MUST",
+      "estimate_hours": 0.25,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S02.1",
+      "priority": "MUST",
+      "estimate_hours": 0.5,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S02.2",
+      "priority": "MUST",
+      "estimate_hours": 0.75,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S02.3",
+      "priority": "MUST",
+      "estimate_hours": 0.75,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S03.1",
+      "priority": "MUST",
+      "estimate_hours": 1.25,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S03.2",
+      "priority": "MUST",
+      "estimate_hours": 0.75,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S03.3",
+      "priority": "MUST",
+      "estimate_hours": 1,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S04.1",
+      "priority": "MUST",
+      "estimate_hours": 0.5,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S04.2",
+      "priority": "MUST",
+      "estimate_hours": 1.25,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S04.3",
+      "priority": "MUST",
+      "estimate_hours": 1.25,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S05.1",
+      "priority": "MUST",
+      "estimate_hours": 0.75,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S05.2",
+      "priority": "MUST",
+      "estimate_hours": 0.75,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S05.3",
+      "priority": "MUST",
+      "estimate_hours": 0.5,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S06.1",
+      "priority": "MUST",
+      "estimate_hours": 0.5,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S06.2",
+      "priority": "MUST",
+      "estimate_hours": 1,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S06.3",
+      "priority": "MUST",
+      "estimate_hours": 0.5,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S07.1",
+      "priority": "MUST",
+      "estimate_hours": 0.75,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S07.2",
+      "priority": "MUST",
+      "estimate_hours": 0.75,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S08.1",
+      "priority": "MUST",
+      "estimate_hours": 0.5,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S08.2",
+      "priority": "MUST",
+      "estimate_hours": 0.5,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    },
+    {
+      "id": "S08.3",
+      "priority": "MUST",
+      "estimate_hours": 0.5,
+      "status": "Backlog",
+      "estimate_kind": "direct",
+      "expected_rollup": null,
+      "rollup_children": []
+    }
   ],
   "creation_phases": [
-    "verify authentication, duplicates, and approval",
-    "create labels and project fields",
-    "create master issue",
-    "create umbrellas in U01–U08 order",
-    "create children in manifest order",
-    "establish hierarchy",
-    "add project items and populate fields",
-    "configure views",
-    "perform read-only verification"
+    "verify authentication, duplicates, approval, and schema-2 manifest",
+    "create and verify native milestone M1",
+    "create and verify W01–W03 umbrella issues",
+    "create and verify E01–E08 epic issues with old_identifier aliases",
+    "create and verify S01.1–S08.3 subtask issues with old_identifier aliases",
+    "establish W→E and E→S sub-issue relationships",
+    "add 34 Project items and populate fields",
+    "record manual-view-pending state and stop at authenticated UI boundary",
+    "perform read-only verification and finalize only after three verified views"
   ]
 }

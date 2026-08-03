@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -35,6 +36,14 @@ REQUIRED_ISSUE_SECTIONS = (
     "Definition of done",
     "Labels",
     "Estimate",
+)
+REQUIRED_UMBRELLA_SECTIONS = (
+    "Objective",
+    "Child epics",
+    "Boundary",
+    "Acceptance contract",
+    "Validation",
+    "Labels",
 )
 
 EXPECTED_TARGETS = {
@@ -161,24 +170,68 @@ def validate_backlog() -> tuple[dict[str, object], set[str]]:
     types = [_string(issue.get("type"), "issue.type") for issue in issues]
     orders = [issue.get("creation_order") for issue in issues]
 
-    assert types.count("master") == 1
-    assert types.count("umbrella") == 8
-    assert types.count("task") == 23
-    assert len(issue_ids) == len(set(issue_ids)) == 32
-    assert len(titles) == len(set(titles)) == 32
-    assert sorted(cast(list[int], orders)) == list(range(1, 33))
+    migration = cast(dict[str, object], manifest.get("migration", {}))
+    assert manifest.get("schema_version") == 2
+    assert migration == {
+        "migration_id": "hierarchy-v2",
+        "from_schema_version": 1,
+        "to_schema_version": 2,
+        "migration_from_manifest_sha256": (
+            "c8c1966a7d512f284bc9a96833b50cfa383b6c06ca30f54cb4401df40f335ed8"
+        ),
+        "hierarchy_version": 2,
+        "milestone_id": "M1",
+        "legacy_master_issue": "MVP",
+        "legacy_umbrella_prefix": "U",
+        "legacy_child_prefix": "C",
+        "canonical_umbrella_prefix": "W",
+        "canonical_epic_prefix": "E",
+        "canonical_subtask_prefix": "S",
+        "old_identifier_policy": (
+            "Retain old U/C identifiers on their canonical E/S records; "
+            "no remote master issue is created."
+        ),
+        "old_inventory": {
+            "milestones": 0, "master_issues": 1, "umbrellas": 8, "children": 23,
+            "total_issues": 32, "relationships": 31, "project_items": 32,
+            "managed_labels": 15,
+        },
+        "new_inventory": {
+            "milestones": 1, "umbrellas": 3, "epics": 8, "subtasks": 23,
+            "total_issues": 34, "relationships": 31, "project_items": 34,
+            "managed_labels": 16,
+        },
+    }
+    milestone = cast(dict[str, object], manifest.get("milestone", {}))
+    milestone_source = REPOSITORY_ROOT / _string(
+        milestone.get("source_file"), "milestone.source_file"
+    )
+    assert milestone == {
+        "id": "M1",
+        "title": "IntentGuard Weekend MVP",
+        "source_file": "docs/backlog/MASTER_ISSUE.md",
+        "source_sha256": hashlib.sha256(milestone_source.read_bytes()).hexdigest(),
+        "issue_count": 34,
+        "canonical_type": "milestone",
+        "deterministic_description_contract": (
+            "UTF-8 bytes of source_file, passed unchanged as the milestone description."
+        ),
+    }
+    assert types.count("umbrella") == 3
+    assert types.count("epic") == 8
+    assert types.count("subtask") == 23
+    assert len(issue_ids) == len(set(issue_ids)) == 34
+    assert len(titles) == len(set(titles)) == 34
+    assert sorted(cast(list[int], orders)) == list(range(1, 35))
 
     issue_id_set = set(issue_ids)
-    expected_umbrellas = {f"U{index:02d}" for index in range(1, 9)}
-    expected_children = {
-        *(f"C{umbrella:02d}.{child}" for umbrella in range(1, 7) for child in range(1, 4)),
-        "C07.1",
-        "C07.2",
-        "C08.1",
-        "C08.2",
-        "C08.3",
+    expected_umbrellas = {f"W{index:02d}" for index in range(1, 4)}
+    expected_epics = {f"E{index:02d}" for index in range(1, 9)}
+    expected_subtasks = {
+        *(f"S{umbrella:02d}.{child}" for umbrella in range(1, 7) for child in range(1, 4)),
+        "S07.1", "S07.2", "S08.1", "S08.2", "S08.3",
     }
-    assert issue_id_set == {"MVP"} | expected_umbrellas | expected_children
+    assert issue_id_set == expected_umbrellas | expected_epics | expected_subtasks
 
     for issue in issues:
         issue_id = _string(issue.get("id"), "issue.id")
@@ -187,28 +240,86 @@ def validate_backlog() -> tuple[dict[str, object], set[str]]:
         assert body_path.is_file(), f"Missing issue body for {issue_id}"
         body = body_path.read_text(encoding="utf-8")
         assert body.startswith(f"# {title}\n"), f"Title mismatch in {body_path}"
-        for section in REQUIRED_ISSUE_SECTIONS:
+        required_sections = (
+            REQUIRED_UMBRELLA_SECTIONS
+            if issue.get("type") == "umbrella"
+            else REQUIRED_ISSUE_SECTIONS
+        )
+        for section in required_sections:
             assert f"## {section}\n" in body, f"{issue_id} missing section: {section}"
 
     relationships = _objects(manifest.get("relationships"), "relationships")
     declared_parent: dict[str, str] = {}
     for relationship in relationships:
         parent = _string(relationship.get("parent"), "relationship.parent")
-        for child in _strings(relationship.get("children"), "relationship.children"):
-            assert child not in declared_parent, f"Duplicate relationship for {child}"
-            declared_parent[child] = parent
+        child = _string(relationship.get("child"), "relationship.child")
+        assert child not in declared_parent, f"Duplicate relationship for {child}"
+        declared_parent[child] = parent
     assert len(declared_parent) == 31
     for issue in issues:
         issue_id = _string(issue.get("id"), "issue.id")
-        if issue_id == "MVP":
+        assert issue.get("milestone_id") == "M1"
+        assert "milestone" not in issue
+        if issue.get("type") == "umbrella":
             assert issue.get("parent") is None
         else:
             assert declared_parent[issue_id] == issue.get("parent")
+    relationships_by_type = {"umbrella-epic": 0, "epic-subtask": 0}
+    issue_by_id = {issue["id"]: issue for issue in issues}
+    for relationship in relationships:
+        relationship_type = relationship.get("relationship_type")
+        assert relationship_type in relationships_by_type
+        parent_issue = issue_by_id[relationship["parent"]]
+        child_record = issue_by_id[relationship["child"]]
+        expected_type = (
+            "umbrella-epic"
+            if parent_issue["type"] == "umbrella" and child_record["type"] == "epic"
+            else "epic-subtask"
+        )
+        assert relationship_type == expected_type
+        relationships_by_type[relationship_type] += 1
+    assert relationships_by_type == {"umbrella-epic": 8, "epic-subtask": 23}
+
+    direct_total = 0.0
+    for issue in issues:
+        children = [row["child"] for row in relationships if row["parent"] == issue["id"]]
+        if issue["type"] == "subtask":
+            assert issue.get("estimate_kind") == "direct"
+            assert issue.get("expected_rollup") is None
+            assert issue.get("rollup_children") == []
+            direct_total += float(cast(int | float, issue["estimate_hours"]))
+        else:
+            assert issue.get("estimate_kind") == "derived-rollup"
+            assert issue.get("rollup_children") == children
+            expected_rollup = sum(
+                float(cast(
+                    int | float,
+                    issue_by_id[child]["estimate_hours"]
+                    if issue_by_id[child]["type"] == "subtask"
+                    else issue_by_id[child]["expected_rollup"],
+                ))
+                for child in children
+            )
+            assert issue.get("expected_rollup") == expected_rollup
+            assert issue.get("estimate_hours") == expected_rollup
+    assert direct_total == 16.0
+    project_items = _objects(manifest.get("project_items"), "project_items")
+    assert len(project_items) == 34
+    for item in project_items:
+        issue = issue_by_id[item["id"]]
+        assert isinstance(item.get("estimate_hours"), (int, float))
+        assert not isinstance(item.get("estimate_hours"), bool)
+        assert item.get("estimate_kind") == issue.get("estimate_kind")
+        assert item.get("expected_rollup") == issue.get("expected_rollup")
+        assert item.get("rollup_children") == issue.get("rollup_children")
 
     labels = _objects(manifest.get("labels"), "labels")
-    assert len(labels) == 15
-    assert len({_string(label.get("name"), "label.name") for label in labels}) == 15
-    print("PASSED: JSON manifest parsing, 1 + 8 + 23 backlog count, titles, bodies, and hierarchy")
+    assert len(labels) == 16
+    assert len({_string(label.get("name"), "label.name") for label in labels}) == 16
+    print(
+        "PASSED: JSON manifest parsing, M1 + 3 + 8 + 23 backlog count, "
+        "titles, bodies, and hierarchy"
+    )
     return manifest, issue_id_set
 
 
@@ -221,9 +332,10 @@ def validate_traceability(issue_ids: set[str]) -> None:
     assert set(identifiers) == EXPECTED_TRACEABILITY_IDS
     for row in ownership:
         umbrella = _string(row.get("umbrella"), "ownership.umbrella")
-        child = _string(row.get("child"), "ownership.child")
-        assert umbrella in issue_ids and child in issue_ids
-        assert child.startswith(f"C{umbrella[1:]}.")
+        epic = _string(row.get("epic"), "ownership.epic")
+        subtask = _string(row.get("subtask"), "ownership.subtask")
+        assert umbrella in issue_ids and epic in issue_ids and subtask in issue_ids
+        assert umbrella.startswith("W") and epic.startswith("E") and subtask.startswith("S")
         _string(row.get("implementation_path"), "ownership.implementation_path")
         _string(row.get("validation_command"), "ownership.validation_command")
         _string(row.get("expected_evidence"), "ownership.expected_evidence")
@@ -245,6 +357,21 @@ def validate_markdown_links() -> None:
                 failures.append(f"{path.relative_to(REPOSITORY_ROOT)} -> {target}")
     assert not failures, "Broken Markdown links:\n" + "\n".join(failures)
     print("PASSED: local Markdown-link validation")
+
+
+def validate_gate_d_preflight() -> None:
+    runbook = (BACKLOG_ROOT / "GITHUB_EXECUTION_PLAN.md").read_text(encoding="utf-8")
+    preflight = runbook.find("ig_gate_d_migration_preflight")
+    first_gate_d_write = runbook.find("## 7. Gate D labels")
+    assert preflight >= 0 and first_gate_d_write >= 0 and preflight < first_gate_d_write
+    assert "STATE_MIGRATION_REQUIRED" in runbook[preflight:first_gate_d_write]
+    assert "migration_history" in runbook[preflight:first_gate_d_write]
+    assert "git ls-remote" in runbook[preflight:first_gate_d_write]
+    assert "ig_gate_d_migration_preflight || exit" in runbook
+    assert "ig_migrate_state_after_remote_readback" in runbook
+    assert "old_state_bytes_sha" in runbook
+    assert "state_sha256" in runbook
+    print("PASSED: executable Gate D migration preflight and state-migration contract")
 
 
 def validate_generated_roots_and_specification() -> None:
@@ -479,6 +606,7 @@ def main(arguments: Sequence[str] | None = None) -> None:
     _, issue_ids = validate_backlog()
     validate_traceability(issue_ids)
     validate_markdown_links()
+    validate_gate_d_preflight()
     validate_generated_roots_and_specification()
     validate_placeholders_and_secrets()
     validate_git_boundary(expected_git_state)

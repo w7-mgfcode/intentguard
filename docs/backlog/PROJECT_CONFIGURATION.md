@@ -14,8 +14,8 @@
 |---|---|---|
 | Status | Built-in single select: Backlog, Ready, In progress, Review, Done | Only workflow-state source |
 | Priority | Single select: MUST, SHOULD, STRETCH, POST-WEEKEND | Scope boundary and ordering |
-| Estimate | Number, hours | Coarse weekend capacity check; child values roll up conceptually |
-| Parent issue | Built-in hierarchy | Master-to-umbrella and umbrella-to-child context |
+| Estimate | Number, hours | Subtask values are primary; epic and umbrella progress is interpreted as native sub-issue roll-up |
+| Parent issue | Built-in hierarchy | Umbrella-to-epic and epic-to-subtask context; M1 is the native milestone |
 | Sub-issue progress | Built-in progress | Evidence-based roll-up without manual percentage fields |
 
 No dates, owners, risk scores, iterations, or automation are added initially.
@@ -29,6 +29,7 @@ No dates, owners, risk scores, iterations, or automation are added initially.
 - Group: Status.
 - Primary sort: Priority in the configured field-option order.
 - Secondary sort: Estimate ascending.
+- Scope: all 34 managed M1 issues (W/E/S), filtered to `Priority:MUST`.
 - Purpose: the smallest actionable strict-MVP view.
 
 ### Full Backlog
@@ -39,7 +40,7 @@ No dates, owners, risk scores, iterations, or automation are added initially.
 - Primary sort: Priority in the configured field-option order.
 - Secondary sort: Parent issue ascending.
 - Tertiary sort: Title ascending.
-- Purpose: inspect all created work without mixing in parking-lot prose.
+- Purpose: inspect all 34 created W/E/S issues without mixing in parking-lot prose.
 
 ### Umbrella Progress
 
@@ -48,7 +49,8 @@ No dates, owners, risk scores, iterations, or automation are added initially.
   acceptable only when it selects that exact label.
 - Required columns: Status, Priority, Estimate, Sub-issue progress.
 - Sort: Title ascending.
-- Purpose: compact progress over U01–U08.
+- Filter result: exactly the three `type:umbrella` issues `W01`, `W02`, and `W03`.
+- Purpose: compact progress over W01–W03; E/S records are inspected in Full Backlog.
 
 ## Configuration and verification method
 

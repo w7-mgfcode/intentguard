@@ -1,5 +1,12 @@
-# U02 — BANKING77 data contract
+# E02 — BANKING77 data contract
 
+
+## Migration identity
+
+- Canonical identifier: `E02` (GitHub issue type: epic).
+- Legacy identifier: `U02` (retained as `old_identifier`).
+- Parent umbrella: `W01`.
+- Milestone: `M1 — IntentGuard Weekend MVP`.
 ## Objective
 
 Load one pinned `PolyAI/banking77` revision, preserve canonical train/test splits, derive a validation split from training data reproducibly, validate 77 labels, and record provenance.
@@ -10,7 +17,7 @@ Stable data identity and split integrity are prerequisites for comparable baseli
 
 ## Parent identifier
 
-Master issue `[MVP] Deliver IntentGuard Weekend MVP`.
+Umbrella issue `W01` in milestone `M1 — IntentGuard Weekend MVP`.
 
 ## Source task
 
@@ -34,7 +41,7 @@ BANKING77 only; no augmentation, external OOD corpus, relabeling, or synthetic r
 
 ## MUST scope
 
-C02.1 loader and revision pin; C02.2 canonical splits, validation split, labels, and provenance; C02.3 command integration and contract tests.
+S02.1 loader and revision pin; S02.2 canonical splits, validation split, labels, and provenance; S02.3 command integration and contract tests.
 
 ## Explicit non-goals
 
@@ -66,11 +73,11 @@ U01 passes; revision-selection method is agreed; storage path and provenance sch
 
 ## Definition of done
 
-C02.1–C02.3 pass and all data claims are Measured from the pinned dataset contract.
+S02.1–S02.3 pass and all data claims are Measured from the pinned dataset contract.
 
 ## Labels
 
-`type:umbrella`, `priority:MUST`, `area:data`
+`type:epic`, `priority:MUST`, `area:data`
 
 ## Estimate
 

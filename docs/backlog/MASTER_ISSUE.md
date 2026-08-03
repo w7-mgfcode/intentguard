@@ -1,4 +1,8 @@
-# [MVP] Deliver IntentGuard Weekend MVP
+# M1 — IntentGuard Weekend MVP
+
+> Canonical source for the native GitHub Milestone acceptance contract. The
+> former remote master issue is intentionally not created; W01–W03 are the
+> milestone's umbrella issues.
 
 ## Objective
 

@@ -1,5 +1,12 @@
-# U04 — DistilBERT training and immutable artifact
+# E04 — DistilBERT training and immutable artifact
 
+
+## Migration identity
+
+- Canonical identifier: `E04` (GitHub issue type: epic).
+- Legacy identifier: `U04` (retained as `old_identifier`).
+- Parent umbrella: `W02`.
+- Milestone: `M1 — IntentGuard Weekend MVP`.
 ## Objective
 
 Fine-tune one 77-class DistilBERT model, select confidence threshold from validation predictions only, and save a reloadable immutable artifact with full provenance.
@@ -10,7 +17,7 @@ This is the improved model and the single deployable unit shared by final evalua
 
 ## Parent identifier
 
-Master issue `[MVP] Deliver IntentGuard Weekend MVP`.
+Umbrella issue `W02` in milestone `M1 — IntentGuard Weekend MVP`.
 
 ## Source task
 
@@ -34,7 +41,7 @@ One `distilbert-base-uncased` sequence classifier. `make train` owns validation 
 
 ## MUST scope
 
-C04.1 environment/forward smoke; C04.2 deterministic fine-tuning and validation predictions; C04.3 threshold selection, immutable artifact, and reload parity.
+S04.1 environment/forward smoke; S04.2 deterministic fine-tuning and validation predictions; S04.3 threshold selection, immutable artifact, and reload parity.
 
 ## Explicit non-goals
 
@@ -66,11 +73,11 @@ U02 data and U03 baseline are Measured; revisions and training parameters are fr
 
 ## Definition of done
 
-C04.1–C04.3 pass, artifact and threshold are reloadable and immutable, and all U04 MUST capabilities are Implemented with applicable evidence Measured.
+S04.1–S04.3 pass, artifact and threshold are reloadable and immutable, and all U04 MUST capabilities are Implemented with applicable evidence Measured.
 
 ## Labels
 
-`type:umbrella`, `priority:MUST`, `area:model`
+`type:epic`, `priority:MUST`, `area:model`
 
 ## Estimate
 

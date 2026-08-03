@@ -1,5 +1,12 @@
-# U06 — FastAPI inference and real-artifact demo
+# E06 — FastAPI inference and real-artifact demo
 
+
+## Migration identity
+
+- Canonical identifier: `E06` (GitHub issue type: epic).
+- Legacy identifier: `U06` (retained as `old_identifier`).
+- Parent umbrella: `W03`.
+- Milestone: `M1 — IntentGuard Weekend MVP`.
 ## Objective
 
 Expose typed health and prediction endpoints backed by one real loaded transformer artifact, with stable errors, structured logs, and a five-minute local demonstration.
@@ -10,7 +17,7 @@ A narrow production boundary proves artifact reuse and operational behavior with
 
 ## Parent identifier
 
-Master issue `[MVP] Deliver IntentGuard Weekend MVP`.
+Umbrella issue `W03` in milestone `M1 — IntentGuard Weekend MVP`.
 
 ## Source task
 
@@ -34,7 +41,7 @@ One FastAPI process loads one artifact at startup and never trains. Prediction r
 
 ## MUST scope
 
-C06.1 schemas, validation, stable errors, request IDs, and safe logs; C06.2 predictor/startup plus health and predict endpoints; C06.3 strict real-artifact demo.
+S06.1 schemas, validation, stable errors, request IDs, and safe logs; S06.2 predictor/startup plus health and predict endpoints; S06.3 strict real-artifact demo.
 
 ## Explicit non-goals
 
@@ -66,11 +73,11 @@ Artifact schema and threshold semantics are stable; request-ID, tie-breaking, in
 
 ## Definition of done
 
-C06.1–C06.3 pass and the real artifact serves all required contracts and demo cases.
+S06.1–S06.3 pass and the real artifact serves all required contracts and demo cases.
 
 ## Labels
 
-`type:umbrella`, `priority:MUST`, `area:api`
+`type:epic`, `priority:MUST`, `area:api`
 
 ## Estimate
 

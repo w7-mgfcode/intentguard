@@ -1,5 +1,12 @@
-# U05 — Comparative evaluation and selective prediction
+# E05 — Comparative evaluation and selective prediction
 
+
+## Migration identity
+
+- Canonical identifier: `E05` (GitHub issue type: epic).
+- Legacy identifier: `U05` (retained as `old_identifier`).
+- Parent umbrella: `W02`.
+- Milestone: `M1 — IntentGuard Weekend MVP`.
 ## Objective
 
 Load persisted baseline and transformer artifacts, evaluate them comparably on the untouched test split, and measure calibration, coverage, selective risk, latency, and unsupported-request abstention.
@@ -10,7 +17,7 @@ The project’s value is not a model claim alone but transparent evidence for wh
 
 ## Parent identifier
 
-Master issue `[MVP] Deliver IntentGuard Weekend MVP`.
+Umbrella issue `W02` in milestone `M1 — IntentGuard Weekend MVP`.
 
 ## Source task
 
@@ -34,7 +41,7 @@ U02 data contract, U03 baseline artifact, and U04 immutable transformer artifact
 
 ## MUST scope
 
-C05.1 comparable classification results; C05.2 calibration, coverage/selective risk, and latency; C05.3 unsupported fixture report and report-schema validation.
+S05.1 comparable classification results; S05.2 calibration, coverage/selective risk, and latency; S05.3 unsupported fixture report and report-schema validation.
 
 ## Explicit non-goals
 
@@ -66,11 +73,11 @@ U03 and U04 artifacts pass reload tests; metric definitions, ECE binning, numeri
 
 ## Definition of done
 
-C05.1–C05.3 pass and all required evaluation claims are Measured from the declared immutable inputs.
+S05.1–S05.3 pass and all required evaluation claims are Measured from the declared immutable inputs.
 
 ## Labels
 
-`type:umbrella`, `priority:MUST`, `area:evaluation`
+`type:epic`, `priority:MUST`, `area:evaluation`
 
 ## Estimate
 
