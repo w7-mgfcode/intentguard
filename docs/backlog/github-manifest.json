@@ -182,7 +182,7 @@
         "type": "built-in-hierarchy"
       },
       {
-        "name": "Sub-issue progress",
+        "name": "Sub-issues progress",
         "type": "built-in-progress"
       }
     ],
@@ -224,7 +224,7 @@
           "Status",
           "Priority",
           "Estimate",
-          "Sub-issue progress"
+          "Sub-issues progress"
         ],
         "sort": [
           "Title"

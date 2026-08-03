@@ -16,7 +16,7 @@
 | Priority | Single select: MUST, SHOULD, STRETCH, POST-WEEKEND | Scope boundary and ordering |
 | Estimate | Number, hours | Subtask values are primary; epic and umbrella progress is interpreted as native sub-issue roll-up |
 | Parent issue | Built-in hierarchy | Umbrella-to-epic and epic-to-subtask context; M1 is the native milestone |
-| Sub-issue progress | Built-in progress | Evidence-based roll-up without manual percentage fields |
+| Sub-issues progress | Built-in progress | Evidence-based roll-up without manual percentage fields |
 
 No dates, owners, risk scores, iterations, or automation are added initially.
 
@@ -47,7 +47,7 @@ No dates, owners, risk scores, iterations, or automation are added initially.
 - Layout: table.
 - Filter semantics: `label:type:umbrella`. A quoted or UI-normalized form is
   acceptable only when it selects that exact label.
-- Required columns: Status, Priority, Estimate, Sub-issue progress.
+- Required columns: Status, Priority, Estimate, Sub-issues progress.
 - Sort: Title ascending.
 - Filter result: exactly the three `type:umbrella` issues `W01`, `W02`, and `W03`.
 - Purpose: compact progress over W01–W03; E/S records are inspected in Full Backlog.

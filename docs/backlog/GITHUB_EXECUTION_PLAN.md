@@ -206,9 +206,11 @@ environment.
 
 Before entering any section labelled `REMOTE WRITE, Gate D`, execute the
 following preflight in the same shell. It performs no state or GitHub write.
-The preflight must run before labels, Project, fields, milestone, issues,
-relationships, items, or views are touched. The current pre-migration state is
-expected to fail with `STATE_MIGRATION_REQUIRED`.
+It selects a strict first-run contract when no Gate D resource is recorded and
+a resumable contract when at least one is recorded. Both modes require the
+published, verified hierarchy-v2 migration; resume mode additionally proves
+that the immutable Gate C audit prefix remains intact before any recorded
+resource can be reused.
 
 ```bash
 ig_gate_d_migration_preflight() {
@@ -217,6 +219,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from urllib.parse import urlparse
 from pathlib import Path
 
 manifest_path = Path(sys.argv[1])
@@ -230,42 +233,191 @@ if state.get("schema_version") != 1:
 if state.get("hierarchy_version") != 2 or state.get("manifest_sha256") != current_sha:
     raise SystemExit("STATE_MIGRATION_REQUIRED: audited hierarchy-v2 state migration is required")
 local_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+origin_url = subprocess.check_output(
+    ["git", "remote", "get-url", "origin"], text=True
+).strip()
+if origin_url.startswith("git@github.com:"):
+    origin_host = "github.com"
+    origin_path = origin_url.removeprefix("git@github.com:")
+else:
+    origin = urlparse(origin_url)
+    origin_host = origin.hostname
+    origin_path = origin.path.lstrip("/")
+if origin_host != "github.com" or origin_path.removesuffix(".git") != (
+    f"{manifest['repository']['owner']}/{manifest['repository']['name']}"
+):
+    raise SystemExit("STATE_MIGRATION_REQUIRED: origin does not match the manifest repository")
 remote_line = subprocess.check_output(
-    ["git", "ls-remote", repository_name, "refs/heads/main"], text=True
+    ["git", "ls-remote", "origin", "refs/heads/main"], text=True
 ).strip()
 remote_sha = remote_line.split()[0] if remote_line else ""
+# The manifest may be corrected after hierarchy-v2 by a further audited
+# migration, so the history is validated as an append-only chain rather than as
+# one row. The chain must begin at the origin the manifest itself declares, each
+# row must continue from its predecessor's target checksum, every recorded
+# commit must be published history, and the final row must publish exactly the
+# current manifest at the current local and remote HEAD.
 history = state.get("migration_history")
-if not isinstance(history, list) or not any(
-    row.get("migration_id") == "hierarchy-v2"
-    and row.get("verified") is True
-    and row.get("from_manifest_sha256") == manifest["migration"]["migration_from_manifest_sha256"]
-    and row.get("to_manifest_sha256") == current_sha
-    and row.get("commit_sha") == local_sha == remote_sha
-    and row.get("state_reset") is False
-    for row in history
-    if isinstance(row, dict)
-):
-    raise SystemExit("STATE_MIGRATION_REQUIRED: verified hierarchy-v2 migration history is missing")
-if len(state.get("attempt_history", [])) != 18 or len(state.get("failure_history", [])) != 3:
-    raise SystemExit("STATE_MIGRATION_REQUIRED: Gate C history must be preserved")
-if state.get("failed_operation") is not None or state.get("error") is not None:
-    raise SystemExit("STATE_MIGRATION_REQUIRED: active failure must be cleared")
+if not isinstance(history, list) or not history or any(not isinstance(row, dict) for row in history):
+    raise SystemExit("STATE_MIGRATION_REQUIRED: migration history is missing or malformed")
+if history[0].get("migration_id") != "hierarchy-v2":
+    raise SystemExit("STATE_MIGRATION_REQUIRED: migration history does not begin at hierarchy-v2")
+expected_from = manifest["migration"]["migration_from_manifest_sha256"]
+seen_migration_ids = set()
+for row in history:
+    migration_id = row.get("migration_id")
+    commit_sha = row.get("commit_sha")
+    target_sha = row.get("to_manifest_sha256")
+    if not isinstance(migration_id, str) or not migration_id or migration_id in seen_migration_ids:
+        raise SystemExit("STATE_MIGRATION_REQUIRED: migration history has a missing or duplicated migration id")
+    seen_migration_ids.add(migration_id)
+    if row.get("verified") is not True or row.get("state_reset") is not False:
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: migration is unverified or reset state: {migration_id}")
+    if row.get("from_manifest_sha256") != expected_from:
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: migration does not continue the manifest chain: {migration_id}")
+    if not isinstance(target_sha, str) or len(target_sha) != 64:
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: migration lacks a target manifest checksum: {migration_id}")
+    if not isinstance(commit_sha, str) or len(commit_sha) != 40:
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: migration lacks a full commit SHA: {migration_id}")
+    if commit_sha != local_sha and subprocess.call(
+        ["git", "merge-base", "--is-ancestor", commit_sha, local_sha],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ) != 0:
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: migration commit is not published history: {migration_id}")
+    expected_from = target_sha
+if expected_from != current_sha:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: migration history does not terminate at the current manifest")
+if history[-1].get("commit_sha") != local_sha or local_sha != remote_sha:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: the final migration commit is not the published local and remote HEAD")
 if state.get("state_reset", False) is not False:
     raise SystemExit("STATE_MIGRATION_REQUIRED: state_reset must remain false")
-if any(
-    state.get(section)
-    for section in ("milestone", "labels", "issues", "hierarchy", "project_items", "fields", "views")
-):
-    raise SystemExit("STATE_MIGRATION_REQUIRED: Gate D collections must be empty before first run")
 if state.get("repository", {}).get("verified") is not True:
     raise SystemExit("STATE_MIGRATION_REQUIRED: Gate C repository evidence is missing")
-print("Gate D migration preflight passed")
+
+# These digests commit the canonical Gate C audit prefixes observed before the
+# first Gate D operation. The boundary is semantic (the first non-06 operation),
+# so Gate D attempts and failures may append without changing the Gate C proof.
+gate_c_attempt_digest="58b587a679b056130e51f2ea7128b3be4e5d7725cbca064ba457c9fde6c23d5e"
+gate_c_failure_digest="694acab761efc35787a26df453d5aadb9a4542196356a0163641c988a2bd6d04"
+gate_d_sections=("milestone","project","labels","issues","hierarchy","project_items","fields","views")
+
+def canonical_digest(value):
+    return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(",",":")).encode("utf-8")).hexdigest()
+
+def gate_c_prefix(history, name, digest):
+    if not isinstance(history,list) or any(not isinstance(row,dict) for row in history):
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: {name} is malformed")
+    boundary=next((index for index,row in enumerate(history) if not str(row.get("operation","")).startswith("06-")),len(history))
+    prefix=history[:boundary]
+    if not prefix or any(str(row.get("operation","")).startswith("06-") for row in history[boundary:]):
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: {name} has an invalid Gate C boundary")
+    if canonical_digest(prefix)!=digest:
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: {name} Gate C prefix was rewritten, reordered, or truncated")
+    return prefix
+
+attempt_history=state.get("attempt_history")
+failure_history=state.get("failure_history")
+gate_c_attempts=gate_c_prefix(attempt_history,"attempt_history",gate_c_attempt_digest)
+gate_c_failures=gate_c_prefix(failure_history,"failure_history",gate_c_failure_digest)
+if len(attempt_history)<len(gate_c_attempts) or len(failure_history)<len(gate_c_failures):
+    raise SystemExit("STATE_MIGRATION_REQUIRED: Gate C audit history was truncated")
+
+# Schema-1 migration history permits an absent milestone as JSON null. Treat
+# only that legacy empty representation as an empty collection in memory; a
+# recorded milestone still must be a structurally valid object below.
+if state.get("milestone") is None:
+    state["milestone"]={}
+for section in gate_d_sections:
+    if not isinstance(state.get(section),dict):
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: Gate D section is malformed: {section}")
+recorded_sections={section:state[section] for section in gate_d_sections if state[section]}
+first_run=not recorded_sections
+if state.get("completed") is not False:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: completed execution state is not resumable")
+
+failed_operation=state.get("failed_operation")
+error=state.get("error")
+if (failed_operation is None)!=(error is None):
+    raise SystemExit("STATE_MIGRATION_REQUIRED: active failure fields are incomplete")
+if failed_operation is not None:
+    if not isinstance(failed_operation,str) or not failed_operation or not isinstance(error,str) or not error:
+        raise SystemExit("STATE_MIGRATION_REQUIRED: active failure is malformed")
+    if state.get("last_attempted_operation")!=failed_operation:
+        raise SystemExit("STATE_MIGRATION_REQUIRED: active failure does not match last attempted operation")
+    if not failure_history or failure_history[-1].get("operation")!=failed_operation or not isinstance(failure_history[-1].get("exit_code"),int) or not isinstance(failure_history[-1].get("message"),str) or not failure_history[-1]["message"]:
+        raise SystemExit("STATE_MIGRATION_REQUIRED: active failure lacks matching audit evidence")
+
+manifest_labels={row["name"] for row in manifest.get("labels",[])}
+manifest_issues={row["id"] for row in manifest.get("issues",[])}
+manifest_views={row["name"] for row in manifest.get("project",{}).get("views",[])}
+manifest_fields={row["name"] for row in manifest.get("project",{}).get("fields",[])}
+manifest_relationships={f'{row["parent"]}->{row["child"]}' for row in manifest.get("relationships",[])}
+
+def require_verified_boolean(record, context):
+    if not isinstance(record,dict) or not isinstance(record.get("verified"),bool):
+        raise SystemExit(f"STATE_MIGRATION_REQUIRED: malformed Gate D record: {context}")
+
+def validate_recorded_gate_d_resources():
+    milestone=state["milestone"]
+    if milestone:
+        require_verified_boolean(milestone,"milestone")
+        if milestone.get("id")!=manifest.get("milestone",{}).get("id") or isinstance(milestone.get("number"),bool) or not isinstance(milestone.get("number"),int) or milestone["number"]<1:
+            raise SystemExit("STATE_MIGRATION_REQUIRED: milestone contradicts manifest")
+    project=state["project"]
+    if project:
+        require_verified_boolean(project,"project")
+        if isinstance(project.get("number"),bool) or not isinstance(project.get("number"),int) or project["number"]<1 or not all(isinstance(project.get(key),str) and project[key] for key in ("id","url")):
+            raise SystemExit("STATE_MIGRATION_REQUIRED: Project record is malformed")
+        payload=json.loads(subprocess.check_output(["gh","project","view",str(project["number"]),"--owner",manifest["repository"]["owner"],"--format","json"],text=True))
+        if payload.get("id")!=project["id"] or payload.get("url")!=project["url"] or payload.get("title")!=manifest["project"]["title"]:
+            raise SystemExit("STATE_MIGRATION_REQUIRED: Project identity does not match live GitHub Project")
+    for key,record in state["labels"].items():
+        require_verified_boolean(record,f"label:{key}")
+        if key not in manifest_labels or record.get("manifest_identifier")!=key or record.get("remote_identifier")!=key:
+            raise SystemExit("STATE_MIGRATION_REQUIRED: label record contradicts manifest")
+    for key,record in state["issues"].items():
+        require_verified_boolean(record,f"issue:{key}")
+        if key not in manifest_issues or not all(record.get(field) for field in ("id","url")) or isinstance(record.get("number"),bool) or not isinstance(record.get("number"),int):
+            raise SystemExit("STATE_MIGRATION_REQUIRED: issue record contradicts manifest")
+    for key,record in state["hierarchy"].items():
+        require_verified_boolean(record,f"hierarchy:{key}")
+        if key not in manifest_relationships or not record.get("parent_id") or not record.get("child_id"):
+            raise SystemExit("STATE_MIGRATION_REQUIRED: hierarchy record contradicts manifest")
+    for key,record in state["project_items"].items():
+        require_verified_boolean(record,f"project-item:{key}")
+        if key not in manifest_issues or not record.get("id") or not isinstance(record.get("values"),dict):
+            raise SystemExit("STATE_MIGRATION_REQUIRED: Project item record contradicts manifest")
+    fields=state["fields"]
+    if fields:
+        if fields.get("verified") is not True or set(fields)!=(manifest_fields|{"verified"}):
+            raise SystemExit("STATE_MIGRATION_REQUIRED: field record shape contradicts manifest")
+        for key in manifest_fields:
+            record=fields[key]
+            if not isinstance(record,dict) or not record.get("id"):
+                raise SystemExit("STATE_MIGRATION_REQUIRED: field record contradicts manifest")
+    for key,record in state["views"].items():
+        require_verified_boolean(record,f"view:{key}")
+        if key not in manifest_views or record.get("manifest_identifier")!=key or record.get("view_name")!=key:
+            raise SystemExit("STATE_MIGRATION_REQUIRED: view record contradicts manifest")
+        if project and (record.get("project_id")!=project["id"] or record.get("project_url")!=project["url"]):
+            raise SystemExit("STATE_MIGRATION_REQUIRED: view Project identity contradicts state")
+
+if first_run:
+    if attempt_history!=gate_c_attempts or failure_history!=gate_c_failures:
+        raise SystemExit("STATE_MIGRATION_REQUIRED: first run must retain only the canonical Gate C history")
+    if failed_operation is not None:
+        raise SystemExit("STATE_MIGRATION_REQUIRED: first run cannot retain an active failure")
+else:
+    if len(attempt_history)==len(gate_c_attempts):
+        raise SystemExit("STATE_MIGRATION_REQUIRED: resume state lacks a post-Gate-C attempt")
+    validate_recorded_gate_d_resources()
+print("Gate D migration preflight passed mode="+("first-run" if first_run else "resume"))
 PY
 }
 
-# Mandatory before the first Gate D mutation. The current state intentionally
-# stops here until a separately approved, pushed and read-back-verified
-# hierarchy-v2 migration is recorded.
+# Mandatory before the first Gate D mutation and before every approved resume.
+# First-run mode requires a pristine Gate D state; resume mode requires intact
+# Gate C provenance and validates every state-owned Gate D resource read-only.
 ig_gate_d_migration_preflight || exit $?
 ```
 
@@ -626,6 +778,146 @@ PY
 
 # Invoke only after a separately approved migration commit and remote read-back:
 # ig_migrate_state_after_remote_readback
+```
+
+### Manifest-correction migration contract
+
+The migration above is specific to hierarchy-v2 and requires empty Gate D
+collections, so it cannot realign the state after a manifest correction that is
+discovered mid-Gate-D. A corrected manifest changes its checksum, and the Gate D
+preflight requires the migration chain to terminate at exactly the current
+manifest, so a correction requires its own audited migration rather than an
+edit.
+
+The operation below performs one such realignment. It is additive, atomic, and
+idempotent, and unlike the hierarchy-v2 migration it deliberately preserves
+already-created Gate D resources. Its audit controls are:
+
+- The caller must state the expected new manifest checksum. An accidental or
+  unreviewed manifest edit therefore cannot be laundered into the state.
+- The correction must continue the recorded chain: the current
+  `manifest_sha256` must equal the last migration's `to_manifest_sha256`.
+- The correction commit must be the published local and remote `main`.
+- Only `manifest_sha256`, `migration_history`, and `state_sha256` may change,
+  and `migration_history` must grow by exactly one appended row. This is
+  asserted by comparing the whole document before and after, so Gate C
+  provenance, attempt and failure history, adoption history, and every recorded
+  Gate D resource are preserved by proof rather than by intent.
+
+```bash
+ig_migrate_state_after_manifest_correction() {
+  uv run --locked python - "$IG_MANIFEST_FILE" "$IG_STATE_FILE" "$IG_REPO" "$1" "$2" <<'PY'
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from urllib.parse import urlparse
+from pathlib import Path
+
+manifest_path, state_path = map(Path, sys.argv[1:3])
+repository, migration_id, expected_new_sha = sys.argv[3:6]
+original = json.loads(state_path.read_text(encoding="utf-8"))
+state = json.loads(json.dumps(original))
+new_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+
+def canonical(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+if new_sha != expected_new_sha:
+    raise SystemExit("manifest checksum does not match the reviewed correction")
+if not migration_id or migration_id == "hierarchy-v2":
+    raise SystemExit("a correction requires its own distinct migration id")
+if state.get("schema_version") != 1 or state.get("hierarchy_version") != 2:
+    raise SystemExit("state schema or hierarchy version precondition failed")
+if state.get("state_reset", False) is not False:
+    raise SystemExit("state_reset must remain false")
+if state.get("completed") is not False:
+    raise SystemExit("a completed execution state is not migratable")
+if state.get("failed_operation") is not None or state.get("error") is not None:
+    raise SystemExit("resolve the active failure before migrating the manifest")
+history = state.get("migration_history")
+if not isinstance(history, list) or not history or any(not isinstance(row, dict) for row in history):
+    raise SystemExit("migration history is missing or malformed")
+if history[0].get("migration_id") != "hierarchy-v2":
+    raise SystemExit("migration history does not begin at hierarchy-v2")
+local_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+# `owner/name` is not a Git remote, so the published head is read through
+# `origin` after proving that `origin` is the expected repository.
+origin_url = subprocess.check_output(["git", "remote", "get-url", "origin"], text=True).strip()
+origin_path = (
+    origin_url.removeprefix("git@github.com:")
+    if origin_url.startswith("git@github.com:")
+    else urlparse(origin_url).path.lstrip("/")
+)
+if origin_path.removesuffix(".git") != repository:
+    raise SystemExit("origin does not point at the expected repository")
+remote_line = subprocess.check_output(["git", "ls-remote", "origin", "refs/heads/main"], text=True).strip()
+remote_sha = remote_line.split()[0] if remote_line else ""
+if not local_sha or local_sha != remote_sha:
+    raise SystemExit("local and remote correction commit do not match")
+previous = history[-1]
+if any(row.get("migration_id") == migration_id for row in history):
+    if (
+        state.get("manifest_sha256") == new_sha
+        and previous.get("migration_id") == migration_id
+        and previous.get("to_manifest_sha256") == new_sha
+        and previous.get("commit_sha") == local_sha
+        and previous.get("verified") is True
+    ):
+        print("manifest-correction migration already applied id=" + migration_id)
+        raise SystemExit(0)
+    raise SystemExit("conflicting manifest-correction migration replay")
+if state.get("manifest_sha256") != previous.get("to_manifest_sha256"):
+    raise SystemExit("recorded manifest checksum does not continue the migration chain")
+if state.get("manifest_sha256") == new_sha:
+    raise SystemExit("manifest is unchanged; no correction migration is required")
+
+state["manifest_sha256"] = new_sha
+state["migration_history"] = history + [{
+    "migration_id": migration_id,
+    "from_manifest_sha256": previous["to_manifest_sha256"],
+    "to_manifest_sha256": new_sha,
+    "commit_sha": local_sha,
+    "verified": True,
+    "state_reset": False,
+}]
+state["state_sha256"] = ""
+state["state_sha256"] = hashlib.sha256(canonical(state).encode("utf-8")).hexdigest()
+
+# Prove that nothing else changed, including every recorded Gate D resource.
+mutable = {"manifest_sha256", "migration_history", "state_sha256"}
+if set(state) != set(original):
+    raise SystemExit("migration added or removed a state field")
+changed = {key for key in state if canonical(state[key]) != canonical(original[key])}
+if not changed <= mutable:
+    raise SystemExit(f"migration would change protected state: {sorted(changed - mutable)}")
+if state["migration_history"][:-1] != original["migration_history"]:
+    raise SystemExit("migration history is not append-only")
+if len(state["migration_history"]) != len(original["migration_history"]) + 1:
+    raise SystemExit("migration must append exactly one row")
+
+temporary = state_path.with_name(f".{state_path.name}.correction.tmp")
+try:
+    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    json.loads(temporary.read_text(encoding="utf-8"))
+    os.replace(temporary, state_path)
+finally:
+    temporary.unlink(missing_ok=True)
+written = json.loads(state_path.read_text(encoding="utf-8"))
+if written != state:
+    raise SystemExit("post-migration read-back differs from the intended state")
+stored = written["state_sha256"]
+written["state_sha256"] = ""
+if stored != hashlib.sha256(canonical(written).encode("utf-8")).hexdigest():
+    raise SystemExit("post-migration state checksum mismatch")
+print("manifest-correction migration applied id=" + migration_id + " to=" + new_sha)
+PY
+}
+
+# Invoke only after the reviewed correction commit is pushed and read back, with
+# the migration id and the independently computed manifest checksum:
+# ig_migrate_state_after_manifest_correction 'status-field-names-v1' '<sha256>'
 ```
 
 ## 4. Atomic state helper — LOCAL WRITE, Gate C/D evidence
@@ -1516,10 +1808,11 @@ printf 'Verified adoption recorded for %s; restart the complete label loop.\n' "
 An exact-title Project that is absent from state requires explicit adoption.
 The creation result and public visibility are immediately read back. The same
 creation read-back also inventories zero or one implicit default view. A
-single view created as part of that exact Project mutation is recorded as a
-Project-creation side effect and reserved for **MVP Board**; it is not an
-adoption. More than one view, or a view first discovered on a later resume
-without a state record, stops execution.
+single view is recorded as a Project-creation side effect and reserved for
+**MVP Board** only when the Project state proves this runbook created that
+exact Project through `08-create-project`; this also permits recovery from an
+interrupted direct read-back. More than one view, or a view without that
+provenance, stops execution for explicit adoption.
 
 ```bash
 ig_verify_project_identity() {
@@ -1537,12 +1830,29 @@ PY
 }
 
 ig_read_views_request() {
-  gh api -H "X-GitHub-Api-Version: ${IG_API_VERSION}" "$ig_views_endpoint"
+  local payload
+  payload="$(gh api graphql -f query="$ig_views_query" -F projectId="$IG_PROJECT_ID")"
+  uv run --locked python - "$payload" <<'PY'
+import json
+import sys
+
+payload=json.loads(sys.argv[1])
+if payload.get("errors"):
+    raise SystemExit("Project view query returned GraphQL errors")
+views=payload.get("data",{}).get("node",{}).get("views")
+if not isinstance(views,dict):
+    raise SystemExit("Project view query did not return a ProjectV2 view collection")
+nodes=views.get("nodes")
+total=views.get("totalCount")
+if not isinstance(nodes,list) or not isinstance(total,int) or total!=len(nodes):
+    raise SystemExit("Project view query is incomplete or has an unsupported shape")
+print(json.dumps({"views":nodes},ensure_ascii=False,sort_keys=True,separators=(",",":")))
+PY
 }
 
 ig_stream_remote_views() {
-  local payload="$1"
-  uv run --locked python - "$payload" <<'PY'
+  local payload="$1" project_url="$2"
+  uv run --locked python - "$payload" "$project_url" <<'PY'
 import json
 import sys
 
@@ -1550,19 +1860,54 @@ payload = json.loads(sys.argv[1])
 rows = payload.get("views", payload if isinstance(payload, list) else [])
 if not isinstance(rows, list):
     raise SystemExit("Project view listing has an unsupported shape")
-seen = set()
+project_url=sys.argv[2].rstrip("/")
+seen_ids = set()
+seen_numbers = set()
 for row in rows:
     remote_id = str(row.get("id") or row.get("node_id") or "")
-    remote_url = str(row.get("html_url") or row.get("url") or "")
-    if not remote_id or not remote_url or remote_id in seen:
+    try:
+        number=int(row.get("number"))
+    except (TypeError,ValueError):
+        raise SystemExit("Project view listing has a missing or invalid view number")
+    if not remote_id or number < 1 or remote_id in seen_ids or number in seen_numbers:
         raise SystemExit("Project view listing has missing or duplicate identity")
-    seen.add(remote_id)
-    record = {"id": remote_id, "url": remote_url, "name": row.get("name") or ""}
+    seen_ids.add(remote_id)
+    seen_numbers.add(number)
+    record = {
+        "id": remote_id,
+        "url": f"{project_url}/views/{number}",
+        "name": row.get("name") or "",
+        "number":number,
+    }
     sys.stdout.buffer.write(json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode() + b"\0")
 PY
 }
 
-ig_project_created_now=0
+ig_assert_at_most_one_remote_view() {
+  local payload="$1"
+  uv run --locked python - "$payload" <<'PY'
+import json,sys
+rows=json.loads(sys.argv[1]).get("views",[])
+if not isinstance(rows,list) or len(rows)>1:
+    raise SystemExit("HARD STOP: Project creation or interrupted creation has more than one unexpected view.")
+PY
+}
+
+ig_assert_recorded_default_view_identity() {
+  local payload="$1" remote_id="$2"
+  uv run --locked python - "$payload" "$remote_id" <<'PY'
+import json,sys
+rows=json.loads(sys.argv[1]).get("views",[])
+if not isinstance(rows,list) or sum(str(row.get("id") or row.get("node_id") or "")==sys.argv[2] for row in rows)!=1:
+    raise SystemExit("STOP: recorded default view identity no longer matches the Project.")
+PY
+}
+
+ig_stop_unowned_project_view() {
+  printf '%s\n' 'ADOPTION REQUIRED: a Project view exists remotely but is absent from execution state.' >&2
+  return 1
+}
+
 ig_project_state="$(ig_state_entry project primary)"
 if test -n "$ig_project_state"; then
   mapfile -d '' -t ig_project_values < <(ig_json_fields "$ig_project_state" number id url)
@@ -1588,23 +1933,33 @@ print(json.dumps({"number":int(sys.argv[1]),"id":sys.argv[2],"url":sys.argv[3],"
 PY
 )"
   ig_state project "$ig_project_record"
-  ig_project_created_now=1
 fi
 test -n "$IG_PROJECT_NUMBER"; test -n "$IG_PROJECT_ID"; test -n "$IG_PROJECT_URL"
+ig_project_state="$(ig_state_entry project primary)"
 
-# Capture the implicit default view only during the direct read-back of the
-# Project mutation. A later unrecorded remote view is unowned and requires an
-# explicit, resource-specific adoption decision.
-ig_views_endpoint="users/${IG_OWNER_ID}/projectsV2/${IG_PROJECT_NUMBER}/views"
-if test "$IG_OWNER_TYPE" = 'Organization'; then
-  ig_views_endpoint="orgs/${IG_OWNER}/projectsV2/${IG_PROJECT_NUMBER}/views"
-fi
-ig_remote_views_json="$(ig_read_views_request)"
-mapfile -d '' -t ig_remote_view_rows < <(ig_stream_remote_views "$ig_remote_views_json")
+# ProjectV2 views are GraphQL-only.  Querying by the recorded Project node ID
+# avoids owner-specific REST endpoints; IG_OWNER_ID and IG_OWNER_TYPE remain
+# validated authentication inputs above.
+ig_views_query='query($projectId:ID!){node(id:$projectId){... on ProjectV2{views(first:100){totalCount nodes{id name number}}}}}'
+ig_verify_operation '08-project-views-readback' ig_read_views_request || exit 1
+ig_remote_views_json="$(cat "$IG_MUTATION_STDOUT")"
+ig_verify_operation '08-project-view-identities' ig_stream_remote_views "$ig_remote_views_json" "$IG_PROJECT_URL" || exit 1
+mapfile -d '' -t ig_remote_view_rows < "$IG_MUTATION_STDOUT"
+ig_verify_operation '08-project-view-count' ig_assert_at_most_one_remote_view "$ig_remote_views_json" || exit 1
 ig_mvp_view_state="$(ig_state_entry views 'MVP Board')"
-if test "$ig_project_created_now" -eq 1; then
-  test -z "$ig_mvp_view_state"
-  test "${#ig_remote_view_rows[@]}" -le 1 || { printf '%s\n' 'HARD STOP: Project creation returned more than one unexpected view.' >&2; exit 1; }
+ig_project_created_by_runbook="$(uv run --locked python - "$ig_project_state" "$IG_PROJECT_ID" "$IG_PROJECT_URL" <<'PY'
+import json,sys
+record=json.loads(sys.argv[1]) if sys.argv[1] else {}
+print(int(
+    record.get("source")=="created" and
+    record.get("creation_operation")=="08-create-project" and
+    record.get("verified") is True and
+    record.get("id")==sys.argv[2] and
+    record.get("url")==sys.argv[3]
+))
+PY
+)"
+if test -z "$ig_mvp_view_state" && test "$ig_project_created_by_runbook" -eq 1; then
   if test "${#ig_remote_view_rows[@]}" -eq 1; then
     mapfile -d '' -t ig_default_view_values < <(ig_json_fields "${ig_remote_view_rows[0]}" id url name)
     ig_default_view_record="$(uv run --locked python - "$IG_MANIFEST_FILE" "$IG_PROJECT_ID" "$IG_PROJECT_URL" "${ig_default_view_values[0]}" "${ig_default_view_values[1]}" "${ig_default_view_values[2]}" <<'PY'
@@ -1634,15 +1989,9 @@ PY
 elif test -n "$ig_mvp_view_state"; then
   ig_recorded_default_id="$(uv run --locked python -c 'import json,sys; print(json.loads(sys.argv[1]).get("remote_view_id") or "")' "$ig_mvp_view_state")"
   if test -n "$ig_recorded_default_id"; then
-    test "$(uv run --locked python - "$ig_remote_views_json" "$ig_recorded_default_id" <<'PY'
-import json,sys
-payload=json.loads(sys.argv[1]); rows=payload.get("views",payload if isinstance(payload,list) else [])
-print(sum(str(row.get("id") or row.get("node_id") or "")==sys.argv[2] for row in rows))
-PY
-)" -eq 1 || { printf '%s\n' 'STOP: recorded default view identity no longer matches the Project.' >&2; exit 1; }
+    ig_verify_operation '08-recorded-default-view-identity' ig_assert_recorded_default_view_identity "$ig_remote_views_json" "$ig_recorded_default_id" || exit 1
   fi
 elif test "${#ig_remote_view_rows[@]}" -ne 0; then
-  test "${#ig_remote_view_rows[@]}" -eq 1 || { printf '%s\n' 'HARD STOP: multiple unrecorded Project views exist.' >&2; exit 1; }
   mapfile -d '' -t ig_unowned_view_values < <(ig_json_fields "${ig_remote_view_rows[0]}" id url name)
   ig_unowned_expected="$(uv run --locked python - "$IG_PROJECT_ID" "$IG_PROJECT_URL" <<'PY'
 import json,sys
@@ -1655,8 +2004,7 @@ print(json.dumps({"remote_view_id":sys.argv[1],"remote_view_url":sys.argv[2],"re
 PY
 )"
   ig_state adoption-required project-view 'MVP Board' "${ig_unowned_view_values[0]}" "$ig_unowned_expected" "$ig_unowned_observed"
-  printf '%s\n' 'ADOPTION REQUIRED: a Project view exists remotely but is absent from execution state.' >&2
-  exit 1
+  ig_verify_operation '08-unowned-project-view' ig_stop_unowned_project_view || exit 1
 fi
 
 ig_project_is_public="$(gh project view "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --format json | uv run --locked python -c 'import json,sys; print(int(json.load(sys.stdin).get("public") is True))')"
@@ -1738,6 +2086,12 @@ if json.loads(sys.argv[1]).get("status")!="exact":
 PY
 }
 
+ig_read_project_link_observation() {
+  local payload
+  payload="$(ig_fetch_project_link)"
+  ig_project_link_observation "$payload"
+}
+
 ig_link_manifest_identifier="${IG_REPO}<->${IG_PROJECT_TITLE}"
 ig_link_remote_identifier="${IG_PROJECT_ID}:${IG_REPOSITORY_ID}"
 ig_link_expected="$(uv run --locked python - "$IG_OWNER" "$IG_REPO_NAME" "$IG_REPO" "$IG_REPOSITORY_ID" "$IG_PROJECT_NUMBER" "$IG_PROJECT_ID" "$IG_PROJECT_TITLE" <<'PY'
@@ -1775,8 +2129,8 @@ if record["source"]=="adopted" and (not record.get("approval_reference") or not 
 PY
   ig_verify_operation '08-reuse-repository-link' ig_verify_project_link || exit 1
 else
-  ig_link_json="$(ig_fetch_project_link)"
-  ig_link_observation="$(ig_project_link_observation "$ig_link_json")"
+  ig_verify_operation '08-project-link-readback' ig_read_project_link_observation || exit 1
+  ig_link_observation="$(cat "$IG_MUTATION_STDOUT")"
   ig_link_status="$(uv run --locked python -c 'import json,sys; print(json.loads(sys.argv[1])["status"])' "$ig_link_observation")"
 
   # Case B: the link may be created only when absent from state and both remote directions.
@@ -1870,7 +2224,7 @@ printf '%s\n' 'Verified repository–Project link adoption recorded; restart sec
 
 Create Priority and Estimate only when absent. An unrecorded existing custom
 field requires explicit adoption. Then retrieve all fields; require exactly one
-Status, Priority, Estimate, Parent issue, and Sub-issue progress field; extract
+Status, Priority, Estimate, Parent issue, and Sub-issues progress field; extract
 their node and required option IDs; persist all five fields; and read back exact
 names and options before any item consumes the IDs.
 
@@ -1903,7 +2257,7 @@ mapfile -d '' -t ig_field_counts < <(
 import json,sys
 from pathlib import Path
 fields=json.loads(Path(sys.argv[1]).read_text())["fields"]
-for name in ("Status","Priority","Estimate","Parent issue","Sub-issue progress"):
+for name in ("Status","Priority","Estimate","Parent issue","Sub-issues progress"):
     sys.stdout.buffer.write(str(sum(row["name"]==name for row in fields)).encode()+b"\0")
 PY
 )
@@ -1925,6 +2279,85 @@ elif test -z "$(ig_state_entry fields Estimate)"; then
   exit 1
 fi
 
+# A new ProjectV2 ships a built-in Status field whose options are Todo,
+# In Progress, and Done. The manifest declares the required workflow states, so
+# the missing ones are appended additively. GitHub's updateProjectV2Field
+# overwrites the option list with exactly what is supplied, so every existing
+# option is refetched and resubmitted with its ID to preserve it; an option
+# submitted with its ID is updated in place rather than replaced. Options are
+# only ever added, never renamed or removed, and the manifest order is
+# authoritative for the final list.
+ig_status_option_payload() {
+  uv run --locked python - "$IG_FIELDS_JSON_FILE" "$IG_MANIFEST_FILE" <<'PY'
+import json,sys
+from pathlib import Path
+remote=json.loads(Path(sys.argv[1]).read_text())["fields"]
+manifest=json.loads(Path(sys.argv[2]).read_text())
+expected=next(f for f in manifest["project"]["fields"] if f["name"]=="Status")["options"]
+rows=[row for row in remote if row.get("name")=="Status"]
+if len(rows)!=1 or not rows[0].get("id"):
+    raise SystemExit("Status field is absent, duplicated, or has no ID")
+existing={option["name"]:option["id"] for option in rows[0].get("options",[]) if option.get("id")}
+if len(existing)!=len(rows[0].get("options",[])):
+    raise SystemExit("Status field has a duplicate or ID-less option")
+# Manifest options first, in declared order, then any pre-existing option the
+# manifest does not name. Nothing is dropped.
+ordered=list(expected)+[name for name in existing if name not in expected]
+payload=[]
+for name in ordered:
+    option={"name":name,"color":"GRAY","description":""}
+    if name in existing:
+        option["id"]=existing[name]
+    payload.append(option)
+print(json.dumps({"field_id":rows[0]["id"],"options":payload,"final_names":ordered,"added":[n for n in expected if n not in existing]},separators=(",",":")))
+PY
+}
+
+ig_verify_status_options() {
+  gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
+  uv run --locked python - "$IG_FIELDS_JSON_FILE" "$IG_MANIFEST_FILE" "$1" <<'PY'
+import json,sys
+from pathlib import Path
+remote=json.loads(Path(sys.argv[1]).read_text())["fields"]
+manifest=json.loads(Path(sys.argv[2]).read_text())
+expected=next(f for f in manifest["project"]["fields"] if f["name"]=="Status")["options"]
+preserved=json.loads(sys.argv[3])
+rows=[row for row in remote if row.get("name")=="Status"]
+if len(rows)!=1:
+    raise SystemExit("Status field read-back is absent or duplicated")
+names=[option["name"] for option in rows[0].get("options",[])]
+if names[:len(expected)]!=expected:
+    raise SystemExit("Status options do not begin with the manifest order")
+missing=[name for name in preserved if name not in names]
+if missing:
+    raise SystemExit(f"Status option read-back dropped pre-existing options: {missing}")
+if len(names)!=len(set(names)):
+    raise SystemExit("Status option read-back contains duplicates")
+PY
+}
+
+gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
+ig_status_plan="$(ig_status_option_payload)"
+ig_status_added="$(uv run --locked python -c 'import json,sys; print(len(json.loads(sys.argv[1])["added"]))' "$ig_status_plan")"
+ig_status_preserved="$(uv run --locked python -c 'import json,sys; d=json.loads(sys.argv[1]); print(json.dumps([o["name"] for o in d["options"] if "id" in o]))' "$ig_status_plan")"
+if test "$ig_status_added" -gt 0; then
+  ig_status_payload_file="${IG_TEMP_DIR}/status-options.json"
+  uv run --locked python - "$ig_status_plan" "$ig_status_payload_file" <<'PY'
+import json,sys
+from pathlib import Path
+plan=json.loads(sys.argv[1])
+Path(sys.argv[2]).write_text(json.dumps({
+    "query":"mutation($fieldId:ID!,$options:[ProjectV2SingleSelectFieldOptionInput!]){updateProjectV2Field(input:{fieldId:$fieldId,singleSelectOptions:$options}){projectV2Field{... on ProjectV2SingleSelectField{id name options{id name}}}}}",
+    "variables":{"fieldId":plan["field_id"],"options":plan["options"]},
+},ensure_ascii=False),encoding="utf-8")
+PY
+  ig_run_mutation '09-extend-status-options' gh api graphql --input "$ig_status_payload_file" || exit 1
+  ig_verify_operation '09-extend-status-options' ig_verify_status_options "$ig_status_preserved" || exit 1
+  ig_state verified '09-extend-status-options'
+else
+  ig_verify_operation '09-status-options-current' ig_verify_status_options "$ig_status_preserved" || exit 1
+fi
+
 gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
 mapfile -d '' -t ig_field_values < <(
   uv run --locked python - "$IG_FIELDS_JSON_FILE" "$IG_MANIFEST_FILE" <<'PY'
@@ -1934,7 +2367,7 @@ remote=json.loads(Path(sys.argv[1]).read_text())["fields"]
 manifest=json.loads(Path(sys.argv[2]).read_text())
 expected={f["name"]:f for f in manifest["project"]["fields"]}
 selected={}
-for name in ("Status","Priority","Estimate","Parent issue","Sub-issue progress"):
+for name in ("Status","Priority","Estimate","Parent issue","Sub-issues progress"):
     rows=[row for row in remote if row.get("name")==name]
     if len(rows)!=1 or not rows[0].get("id"):
         raise SystemExit(f"required field {name} is absent, duplicated, or has no ID")
@@ -1943,12 +2376,16 @@ priority_options={row["name"]:row["id"] for row in selected["Priority"].get("opt
 status_options={row["name"]:row["id"] for row in selected["Status"].get("options",[]) if row.get("id")}
 if list(priority_options) != expected["Priority"]["options"]:
     raise SystemExit("Priority options differ from manifest")
-if list(status_options) != expected["Status"]["options"]:
-    raise SystemExit("Status options differ from manifest")
+# Priority is created by this runbook, so its option list must match the
+# manifest exactly. Status is a GitHub built-in whose original options are
+# preserved additively, so the manifest options must be its leading prefix and
+# every manifest option must be present; trailing built-ins are permitted.
+if list(status_options)[:len(expected["Status"]["options"])] != expected["Status"]["options"]:
+    raise SystemExit("Status options do not begin with the manifest order")
 values=(
     selected["Priority"]["id"], selected["Status"]["id"],
     selected["Estimate"]["id"], selected["Parent issue"]["id"],
-    selected["Sub-issue progress"]["id"], priority_options.get("MUST"),
+    selected["Sub-issues progress"]["id"], priority_options.get("MUST"),
     status_options.get("Backlog"),
 )
 if any(not value for value in values):
@@ -1975,7 +2412,7 @@ print(json.dumps({
  "Status":{"id":sys.argv[2],"options":{"Backlog":sys.argv[7]}},
  "Estimate":{"id":sys.argv[3],"unit":"hours"},
  "Parent issue":{"id":sys.argv[4],"type":"built-in-hierarchy"},
- "Sub-issue progress":{"id":sys.argv[5],"type":"built-in-progress"},
+ "Sub-issues progress":{"id":sys.argv[5],"type":"built-in-progress"},
  "verified":True,
 },separators=(",",":")))
 PY
@@ -2170,13 +2607,32 @@ PY
 
 ig_create_issue_row() {
   local row="$1"; local -a v labels cmd
-  mapfile -d '' -t v < <(ig_json_fields "$row" id title body_file resolved_labels old_identifier)
+  mapfile -d '' -t v < <(uv run --locked python - "$row" <<'PY'
+import json,sys
+value=json.loads(sys.argv[1])
+for key in ("id","title","body_file","resolved_labels","old_identifier"):
+    part=value.get(key) if key=="old_identifier" else value[key]
+    if isinstance(part,(dict,list)):
+        part=json.dumps(part,ensure_ascii=False,sort_keys=True,separators=(",",":"))
+    elif part is None:
+        part=""
+    else:
+        part=str(part)
+    sys.stdout.buffer.write(part.encode("utf-8")+b"\0")
+PY
+)
   local key="${v[0]}" title="${v[1]}" body="${v[2]}" labels_json="${v[3]}" old_id="${v[4]-}"
   test -f "$body"
   local recorded="$(ig_state_entry issues "$key")"
   if test -n "$recorded"; then
     mapfile -d '' -t readback < <(ig_json_fields "$recorded" number id url)
     ig_verify_operation "10A-reuse-${key}" ig_verify_issue "$row" "${readback[0]}" "${readback[1]}" "${readback[2]}" || return 1
+    ig_state issue "$key" "$(uv run --locked python - "$recorded" <<'PY'
+import json,sys
+d=json.loads(sys.argv[1]); d["verified"]=True
+print(json.dumps(d,separators=(",",":")))
+PY
+)"
     return 0
   fi
   local matches="$(gh issue list --repo "$IG_REPO" --state all --limit 1000 --json title | uv run --locked python -c 'import json,sys; print(sum(x["title"]==sys.argv[1] for x in json.load(sys.stdin)))' "$title")"
@@ -2185,7 +2641,10 @@ ig_create_issue_row() {
   cmd=(gh issue create --repo "$IG_REPO" --title "$title" --body-file "$body" --milestone 'IntentGuard Weekend MVP')
   for label in "${labels[@]}"; do cmd+=(--label "$label"); done
   ig_run_mutation "10A-create-${key}" "${cmd[@]}" || return 1
-  local url="$(tr -d '\r\n' < "$IG_MUTATION_STDOUT")" number="${url##*/}" node_id="$(gh issue view "${url##*/}" --repo "$IG_REPO" --json id --jq .id)"
+  local url number node_id
+  url="$(tr -d '\r\n' < "$IG_MUTATION_STDOUT")"
+  number="${url##*/}"
+  node_id="$(gh issue view "$number" --repo "$IG_REPO" --json id --jq .id)"
   test -n "$node_id"
   ig_state issue "$key" "$(uv run --locked python - "$number" "$node_id" "$url" "$old_id" <<'PY'
 import json,sys
@@ -2193,15 +2652,106 @@ print(json.dumps({"number":int(sys.argv[1]),"id":sys.argv[2],"url":sys.argv[3],"
 PY
 )"
   ig_verify_operation "10A-create-${key}" ig_verify_issue "$row" "$number" "$node_id" "$url" || return 1
+  ig_state issue "$key" "$(uv run --locked python - "$number" "$node_id" "$url" "$old_id" <<'PY'
+import json,sys
+print(json.dumps({"number":int(sys.argv[1]),"id":sys.argv[2],"url":sys.argv[3],"old_identifier":sys.argv[4] or None,"milestone":"M1","verified":True},separators=(",",":")))
+PY
+)"
   ig_state verified "10A-create-${key}"
 }
 
-ig_run_mutation '10A-create-milestone' gh api "repos/${IG_REPO}/milestones" --method POST \\
-  -f title='IntentGuard Weekend MVP' -f description="$(cat docs/backlog/MASTER_ISSUE.md)" -f state='open' || exit 1
-IG_MILESTONE_NUMBER="$(uv run --locked python -c 'import json,sys; print(json.load(sys.stdin)["number"])' < "$IG_MUTATION_STDOUT")"
-test -n "$IG_MILESTONE_NUMBER"
-gh api "repos/${IG_REPO}/milestones/${IG_MILESTONE_NUMBER}" > "${IG_TEMP_DIR}/milestone-readback.json"
-ig_state milestone "$(printf '%s' "$IG_MILESTONE_NUMBER" | uv run --locked python -c 'import json,sys; print(json.dumps({"number":int(sys.stdin.read()),"id":"M1","source":"created","verified":True},separators=(",",":")))')"
+mapfile -d '' -t ig_milestone_rows < <(ig_manifest_stream milestone)
+test "${#ig_milestone_rows[@]}" -eq 1
+ig_milestone_row="${ig_milestone_rows[0]}"
+mapfile -d '' -t ig_milestone_values < <(ig_json_fields "$ig_milestone_row" id title source_file source_sha256)
+IG_MILESTONE_ID="${ig_milestone_values[0]}"
+ig_milestone_title="${ig_milestone_values[1]}"
+ig_milestone_source_file="${ig_milestone_values[2]}"
+ig_milestone_source_sha256="${ig_milestone_values[3]}"
+test "$IG_MILESTONE_ID" = 'M1'
+test -f "$ig_milestone_source_file"
+test "$(ig_sha256 "$ig_milestone_source_file")" = "$ig_milestone_source_sha256"
+
+ig_verify_milestone() {
+  local number="$1" readback="${IG_TEMP_DIR}/milestone-readback.json"
+  gh api "repos/${IG_REPO}/milestones/${number}" > "$readback"
+  uv run --locked python - "$ig_milestone_row" "$readback" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+expected=json.loads(sys.argv[1]); actual=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+source=Path(expected["source_file"]).read_bytes()
+if hashlib.sha256(source).hexdigest()!=expected["source_sha256"]:
+    raise SystemExit("milestone source checksum mismatch")
+if actual.get("title")!=expected["title"] or actual.get("state")!="open":
+    raise SystemExit("milestone title or state read-back mismatch")
+if actual.get("description")!=source.decode("utf-8"):
+    raise SystemExit("milestone description read-back mismatch")
+if isinstance(actual.get("number"),bool) or not isinstance(actual.get("number"),int) or actual["number"]<=0:
+    raise SystemExit("milestone number read-back mismatch")
+PY
+}
+
+ig_milestone_state="$(uv run --locked python - "$IG_STATE_FILE" <<'PY'
+import json,sys
+from pathlib import Path
+record=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("milestone")
+if isinstance(record,dict) and record:
+    print(json.dumps(record,ensure_ascii=False,sort_keys=True,separators=(",",":")))
+PY
+)"
+if test -n "$ig_milestone_state"; then
+  IG_MILESTONE_NUMBER="$(uv run --locked python -c 'import json,sys; print(json.loads(sys.argv[1])["number"])' "$ig_milestone_state")"
+  ig_verify_operation '10A-reuse-milestone' ig_verify_milestone "$IG_MILESTONE_NUMBER" || exit 1
+  ig_state milestone "$(uv run --locked python - "$ig_milestone_state" <<'PY'
+import json,sys
+record=json.loads(sys.argv[1]); record["verified"]=True
+print(json.dumps(record,separators=(",",":")))
+PY
+)"
+else
+  ig_milestone_list="${IG_TEMP_DIR}/milestone-list.json"
+  gh api --paginate --slurp "repos/${IG_REPO}/milestones?state=all&per_page=100" > "$ig_milestone_list"
+  ig_matching_milestones="$(uv run --locked python - "$ig_milestone_list" "$ig_milestone_title" <<'PY'
+import json,sys
+from pathlib import Path
+rows=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+milestones=[item for page in rows for item in page] if rows and isinstance(rows[0],list) else rows
+matches=[item for item in milestones if item.get("title")==sys.argv[2]]
+print(json.dumps(matches,ensure_ascii=False,sort_keys=True,separators=(",",":")))
+PY
+)"
+  test "$(uv run --locked python -c 'import json,sys; print(len(json.loads(sys.argv[1])))' "$ig_matching_milestones")" -eq 0 || {
+    ig_milestone_expected="$(uv run --locked python - "$IG_MILESTONE_ID" "$ig_milestone_title" "$ig_milestone_source_sha256" <<'PY'
+import json,sys
+print(json.dumps({"id":sys.argv[1],"title":sys.argv[2],"state":"open","source_sha256":sys.argv[3]},separators=(",",":")))
+PY
+)"
+    ig_milestone_observed="$(uv run --locked python - "$ig_matching_milestones" <<'PY'
+import json,sys
+row=json.loads(sys.argv[1])[0]
+print(json.dumps({"number":row.get("number"),"title":row.get("title"),"state":row.get("state"),"description_sha256":__import__("hashlib").sha256(str(row.get("description","")).encode("utf-8")).hexdigest()},separators=(",",":")))
+PY
+)"
+    ig_state adoption-required milestone "$IG_MILESTONE_ID" "$(uv run --locked python -c 'import json,sys; print(json.loads(sys.argv[1])[0]["number"])' "$ig_matching_milestones")" "$ig_milestone_expected" "$ig_milestone_observed"
+    printf '%s\n' 'ADOPTION REQUIRED: matching M1 milestone is unrecorded.' >&2
+    exit 1
+  }
+  ig_milestone_payload="${IG_TEMP_DIR}/milestone-create.json"
+  uv run --locked python - "$ig_milestone_row" "$ig_milestone_payload" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+row=json.loads(sys.argv[1]); source=Path(row["source_file"]).read_bytes()
+if hashlib.sha256(source).hexdigest()!=row["source_sha256"]:
+    raise SystemExit("milestone source checksum mismatch")
+Path(sys.argv[2]).write_text(json.dumps({"title":row["title"],"description":source.decode("utf-8"),"state":"open"},ensure_ascii=False),encoding="utf-8")
+PY
+  ig_run_mutation '10A-create-milestone' gh api "repos/${IG_REPO}/milestones" --method POST --input "$ig_milestone_payload" || exit 1
+  IG_MILESTONE_NUMBER="$(uv run --locked python -c 'import json,sys; print(json.load(sys.stdin)["number"])' < "$IG_MUTATION_STDOUT")"
+  test -n "$IG_MILESTONE_NUMBER"
+  ig_state milestone "$(printf '%s' "$IG_MILESTONE_NUMBER" | uv run --locked python -c 'import json,sys; print(json.dumps({"number":int(sys.stdin.read()),"id":"M1","source":"created","verified":False},separators=(",",":")))')"
+  ig_verify_operation '10A-create-milestone' ig_verify_milestone "$IG_MILESTONE_NUMBER" || exit 1
+  ig_state milestone "$(printf '%s' "$IG_MILESTONE_NUMBER" | uv run --locked python -c 'import json,sys; print(json.dumps({"number":int(sys.stdin.read()),"id":"M1","source":"created","verified":True},separators=(",",":")))')"
+fi
 for stream in umbrellas epics subtasks; do
   count=0
   while IFS= read -r -d '' row; do ig_create_issue_row "$row" || exit 1; count=$((count+1)); done < <(ig_manifest_stream "$stream")
@@ -2540,7 +3090,8 @@ PY
 # boundary the only permitted remote view is the state-owned default-view side
 # effect captured in section 8. Any other remote view is unowned and requires
 # a separate, identity-specific adoption decision.
-ig_read_views_request > "$IG_VIEWS_JSON_FILE"
+ig_verify_operation '15.1-project-views-readback' ig_read_views_request || exit 1
+cp -- "$IG_MUTATION_STDOUT" "$IG_VIEWS_JSON_FILE"
 uv run --locked python - "$IG_STATE_FILE" "$IG_VIEWS_JSON_FILE" <<'PY'
 import json,sys
 from pathlib import Path
@@ -2630,7 +3181,7 @@ Only the user performs these UI mutations:
    Status, Priority, Parent issue, Estimate, Labels, and the sort sequence
    Priority option order, Parent issue ascending, Title ascending.
 5. Create **Umbrella Progress** as a table filtered semantically by the exact
-   `type:umbrella` label, with Status, Priority, Estimate, Sub-issue progress,
+   `type:umbrella` label, with Status, Priority, Estimate, Sub-issues progress,
    sorted by Title ascending. Quoted or UI-normalized filter syntax is allowed
    only when it selects that exact label.
 6. Preserve exactly these three views. Do not create a fourth view and do not
@@ -2687,7 +3238,8 @@ records before atomically storing them through `manual-view-verified`:
 ```bash
 test "$(gh api user --jq .login)" = "$IG_OWNER"
 test -f "$IG_UI_EVIDENCE_FILE"
-ig_read_views_request > "$IG_VIEWS_JSON_FILE"
+ig_verify_operation '15.3-project-views-readback' ig_read_views_request || exit 1
+cp -- "$IG_MUTATION_STDOUT" "$IG_VIEWS_JSON_FILE"
 mapfile -d '' -t ig_verified_view_rows < <(
   uv run --locked python - "$IG_MANIFEST_FILE" "$IG_STATE_FILE" "$IG_UI_EVIDENCE_FILE" "$IG_VIEWS_JSON_FILE" <<'PY'
 import json,sys
@@ -2824,7 +3376,7 @@ attestation="I confirm that I manually configured the three IntentGuard Project 
 expected={
     "MVP Board":{"name":"MVP Board","layout":"board","filter":"Priority:MUST","columns":[],"group_by":"Status","sort":["Priority","Estimate"],"sort_directions":["field-option-order","ascending"]},
     "Full Backlog":{"name":"Full Backlog","layout":"table","filter":"no-active-filter","columns":["Status","Priority","Parent issue","Estimate","Labels"],"group_by":None,"sort":["Priority","Parent issue","Title"],"sort_directions":["field-option-order","ascending","ascending"]},
-    "Umbrella Progress":{"name":"Umbrella Progress","layout":"table","filter":"label:type:umbrella","columns":["Status","Priority","Estimate","Sub-issue progress"],"group_by":None,"sort":["Title"],"sort_directions":["ascending"]},
+    "Umbrella Progress":{"name":"Umbrella Progress","layout":"table","filter":"label:type:umbrella","columns":["Status","Priority","Estimate","Sub-issues progress"],"group_by":None,"sort":["Title"],"sort_directions":["ascending"]},
 }
 
 def capture_default(rows):
@@ -2910,7 +3462,8 @@ test "$(uv run --locked python -c 'import json,sys; print(sum(row["title"]==sys.
 ig_fetch_project_link > "${IG_TEMP_DIR}/verify-project-link.json"
 gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
 ig_fetch_project_items > "$IG_ITEMS_JSON_FILE"
-ig_read_views_request > "$IG_VIEWS_JSON_FILE"
+ig_verify_operation '16-project-views-readback' ig_read_views_request || exit 1
+cp -- "$IG_MUTATION_STDOUT" "$IG_VIEWS_JSON_FILE"
 : > "${IG_TEMP_DIR}/verify-relationships.jsonl"
 while IFS= read -r -d '' ig_relationship_row; do
   mapfile -d '' -t ig_relationship_values < <(ig_json_fields "$ig_relationship_row" key child)
@@ -3020,7 +3573,7 @@ if link_state["source"]=="adopted" and (not link_state.get("approval_reference")
 for name,key in (
     ("Priority","Priority"), ("Status","Status"), ("Estimate","Estimate"),
     ("Parent issue","Parent issue"),
-    ("Sub-issue progress","Sub-issue progress"),
+    ("Sub-issues progress","Sub-issues progress"),
 ):
     remote=[row for row in fields if row.get("name")==name]
     if len(remote)!=1 or remote[0].get("id")!=state["fields"][key]["id"]: raise SystemExit(f"field mismatch: {name}")
@@ -3204,10 +3757,83 @@ PY
 ig_manifest_stream validate
 ```
 
-For a normal mutation failure, rerun sections 1–16 in order after resolving the
-external cause. Each loop verifies every recorded resource against GitHub
-before reuse, stops at the first mismatch, and creates only the first absent
-approved resource.
+### 18.0 Resume runtime rehydration — READ-ONLY
+
+After sections 1–2 and the section-4 state helper are loaded, but before any
+Gate D section is entered on a resume, run this block in the same shell. It
+rehydrates only values backed by verified state records. Section 1 always
+supplies `IG_OWNER_TYPE` and `IG_OWNER_ID`; `IG_REPO` remains manifest-derived.
+`IG_LOCAL_HEAD`, `IG_REMOTE_HEAD`, and the disabled legacy `IG_MASTER_*`
+variables have no Gate D consumer and are intentionally not rehydrated.
+
+```bash
+ig_rehydrate_resume_runtime() {
+  local ig_rehydrated_file
+  local -a ig_rehydrated_values=()
+  ig_rehydrated_file="${IG_TEMP_DIR}/resume-runtime-values.nul"
+  if ! uv run --locked python - "$IG_STATE_FILE" > "$ig_rehydrated_file" <<'PY'
+import json,sys
+from pathlib import Path
+
+state=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+def emit(name,value):
+    if not isinstance(value,str) or not value:
+        raise SystemExit(f"resume rehydration has malformed {name}")
+    sys.stdout.buffer.write(f"{name}={value}".encode()+b"\0")
+repository=state.get("repository",{})
+if repository:
+    if repository.get("verified") is not True:
+        raise SystemExit("resume repository record is unverified")
+    emit("IG_REPOSITORY_ID",repository.get("id"))
+project=state.get("project",{})
+if project:
+    if project.get("verified") is not True or isinstance(project.get("number"),bool) or not isinstance(project.get("number"),int) or project["number"]<1:
+        raise SystemExit("resume Project record is malformed or unverified")
+    emit("IG_PROJECT_NUMBER",str(project["number"]))
+    emit("IG_PROJECT_ID",project.get("id")); emit("IG_PROJECT_URL",project.get("url"))
+fields=state.get("fields",{})
+if fields:
+    if fields.get("verified") is not True:
+        raise SystemExit("resume field record is unverified")
+    for state_key,variable in (("Priority","IG_PRIORITY_FIELD_ID"),("Status","IG_STATUS_FIELD_ID"),("Estimate","IG_ESTIMATE_FIELD_ID"),("Parent issue","IG_PARENT_FIELD_ID"),("Sub-issues progress","IG_SUB_ISSUE_PROGRESS_FIELD_ID")):
+        emit(variable,fields.get(state_key,{}).get("id"))
+    emit("IG_MUST_OPTION_ID",fields.get("Priority",{}).get("options",{}).get("MUST"))
+    emit("IG_BACKLOG_OPTION_ID",fields.get("Status",{}).get("options",{}).get("Backlog"))
+milestone=state.get("milestone")
+if milestone:
+    if milestone.get("verified") is not True or isinstance(milestone.get("number"),bool) or not isinstance(milestone.get("number"),int) or milestone["number"]<1:
+        raise SystemExit("resume milestone record is malformed or unverified")
+    emit("IG_MILESTONE_NUMBER",str(milestone["number"]))
+PY
+  then
+    return 1
+  fi
+  mapfile -d '' -t ig_rehydrated_values < "$ig_rehydrated_file"
+  if test "${#ig_rehydrated_values[@]}" -eq 0; then
+    return 0
+  fi
+  for ig_rehydrated_value in "${ig_rehydrated_values[@]}"; do
+    case "$ig_rehydrated_value" in
+      IG_REPOSITORY_ID=*|IG_PROJECT_NUMBER=*|IG_PROJECT_ID=*|IG_PROJECT_URL=*|IG_PRIORITY_FIELD_ID=*|IG_STATUS_FIELD_ID=*|IG_ESTIMATE_FIELD_ID=*|IG_PARENT_FIELD_ID=*|IG_SUB_ISSUE_PROGRESS_FIELD_ID=*|IG_MUST_OPTION_ID=*|IG_BACKLOG_OPTION_ID=*|IG_MILESTONE_NUMBER=*)
+        export "$ig_rehydrated_value"
+        ;;
+      *) printf 'STOP: unknown resume runtime variable.\n' >&2; return 1 ;;
+    esac
+  done
+}
+
+ig_rehydrate_resume_runtime
+```
+
+For a normal mutation failure, rerun sections 1–2 and 4–16 in order after
+resolving the external cause; do not rerun section 3 because initialization
+must never overwrite an existing state file. Section 2 enters resume mode when
+any Gate D resource is recorded, validates the immutable Gate C audit prefix,
+and requires a well-formed recorded failure rather than clearing it. Run 18.0
+immediately after section 4 so every later Gate D section receives verified
+runtime values from state. Each loop then verifies every recorded resource
+against GitHub before reuse, stops at the first mismatch, and creates only the
+first absent approved resource.
 
 For an adoption stop, resume in this exact order:
 
