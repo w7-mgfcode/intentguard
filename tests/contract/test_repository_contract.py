@@ -119,8 +119,9 @@ def test_authoritative_specification_remains_in_place() -> None:
     assert (specification / "docs" / "ARCHITECTURE.md").is_file()
 
 
-def test_generated_roots_retain_only_their_contract_readmes() -> None:
-    for name in ("data", "artifacts", "reports"):
+def test_generated_roots_retain_their_contract_readmes() -> None:
+    assert (REPOSITORY_ROOT / "data" / "README.md").is_file()
+    for name in ("artifacts", "reports"):
         entries = sorted(path.name for path in (REPOSITORY_ROOT / name).iterdir())
         assert entries == ["README.md"]
 
@@ -146,7 +147,8 @@ def test_makefile_exposes_the_complete_command_contract() -> None:
 def test_unimplemented_commands_are_explicit() -> None:
     makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
 
-    for umbrella in ("U02", "U03", "U04", "U05", "U06"):
+    assert "uv run --locked python scripts/prepare_data.py" in makefile
+    for umbrella in ("U03", "U04", "U05", "U06"):
         assert f"Not implemented — tracked by {umbrella}" in makefile
 
 

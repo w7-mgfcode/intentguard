@@ -6,16 +6,20 @@ The complete IntentGuard specification under [`docs/specification/`](specificati
 
 Use the authoritative [implementation command plan](specification/docs/IMPLEMENTATION_PLAN.md) for command ownership and expected evidence, and the authoritative [architecture](specification/docs/ARCHITECTURE.md) for component boundaries and data flow.
 
-## Current Gate A commands
+## Current local commands
 
 ```bash
 make setup
 make help
+make data
 make lint
 make test
 ```
 
-`make setup` installs the exact environment represented by `uv.lock`. `make lint` runs Ruff, mypy, and the repository-foundation validator. `make test` runs only honest skeleton tests.
+`make setup` installs the exact environment represented by `uv.lock`. `make data`
+loads the pinned BANKING77 revision, writes ignored local provenance, and needs
+network access only when a matching local cache is absent. `make lint` runs Ruff,
+mypy, and the repository-foundation validator. `make test` runs the local tests.
 
 ## Repository lifecycle validation
 
@@ -38,10 +42,9 @@ All modes run the same repository-content checks and inspect Git read-only. The 
 
 ## Planned command lifecycle
 
-When U02–U06 are implemented, the intended local lifecycle is:
+The remaining intended local lifecycle is:
 
 ```bash
-make data
 make baseline
 make train
 make evaluate
@@ -49,13 +52,17 @@ make serve
 make demo
 ```
 
-During Gate A, each of those targets exits non-zero and names its owning umbrella. They must not be used as evidence of ML or API completion.
+`make baseline` through `make demo` currently exit non-zero and name their owning
+umbrella. They must not be used as evidence of ML or API completion.
 
 The threshold lifecycle is fixed: `make train` chooses it from validation predictions and persists it in the immutable transformer artifact; `make evaluate` loads that value and applies it to test predictions without tuning on test labels.
 
 ## Configuration and generated outputs
 
-Reviewed defaults live in `configs/default.toml`. Dataset and model revisions remain explicitly unresolved until verified by U02 and U04. Local settings may be supplied through variables shown in `.env.example`; do not commit `.env` files.
+Reviewed defaults live in `configs/default.toml`. The dataset revision is pinned
+by U02; the model revision remains explicitly unresolved until U04. Local
+settings may be supplied through variables shown in `.env.example`; do not
+commit `.env` files.
 
 Generated data, artifacts, and reports stay under their named root directories and are untracked except for README contracts. Serving must eventually load an already-created artifact; it must never train or mutate that artifact.
 

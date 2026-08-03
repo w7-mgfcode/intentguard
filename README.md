@@ -2,7 +2,7 @@
 
 Confidence-aware support intent classification with reproducible evaluation, selective prediction, and a typed FastAPI inference boundary.
 
-> Foundation status: Gate A repository preparation is implemented. The data, baseline, transformer, evaluation, API, and real-artifact demo are still planned and their Make targets deliberately fail until their MUST umbrellas are delivered.
+> Foundation and the BANKING77 data contract are implemented. The baseline, transformer, evaluation, API, and real-artifact demo remain planned and their Make targets deliberately fail until their MUST umbrellas are delivered.
 
 ## What this repository is for
 
@@ -20,7 +20,10 @@ make lint
 make test
 ```
 
-Available commands are documented by `make help`. The following targets are intentionally unavailable during Gate A and exit non-zero with their owner: `make data`, `make baseline`, `make train`, `make evaluate`, `make serve`, and `make demo`.
+Available commands are documented by `make help`. `make data` is operational for
+the pinned BANKING77 contract. The following targets are intentionally
+unavailable and exit non-zero with their owner: `make baseline`, `make train`,
+`make evaluate`, `make serve`, and `make demo`.
 
 ## Repository map
 
