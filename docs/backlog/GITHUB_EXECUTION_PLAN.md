@@ -287,8 +287,21 @@ for row in history:
     expected_from = target_sha
 if expected_from != current_sha:
     raise SystemExit("STATE_MIGRATION_REQUIRED: migration history does not terminate at the current manifest")
-if history[-1].get("commit_sha") != local_sha or local_sha != remote_sha:
-    raise SystemExit("STATE_MIGRATION_REQUIRED: the final migration commit is not the published local and remote HEAD")
+if local_sha != remote_sha:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: local and remote HEAD differ")
+# Requiring the final migration commit to *be* HEAD would forbid every later
+# commit, including runbook fixes made while Gate D is resumable. The loop above
+# already proves each migration commit is published history, so what must hold
+# here is that the manifest this run will execute against is itself published at
+# HEAD and byte-identical to the chain terminus.
+committed_manifest = subprocess.run(
+    ["git", "show", f'{local_sha}:{state["manifest_path"]}'],
+    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+)
+if committed_manifest.returncode != 0:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: the recorded manifest path is not published at HEAD")
+if hashlib.sha256(committed_manifest.stdout).hexdigest() != current_sha:
+    raise SystemExit("STATE_MIGRATION_REQUIRED: the working manifest is not the manifest published at HEAD")
 if state.get("state_reset", False) is not False:
     raise SystemExit("STATE_MIGRATION_REQUIRED: state_reset must remain false")
 if state.get("repository", {}).get("verified") is not True:
@@ -3170,7 +3183,12 @@ PY
     ig_state verified "14-estimate-rollup-${ig_issue_key}"
   fi
 
-  if test -z "${ig_current_values[2]}"; then
+  # Adding an item to a Project makes GitHub assign the built-in Status default
+  # ("Todo"), which is not one of the manifest's five workflow states. That
+  # default is GitHub's, not a recorded decision, so it is overwritten exactly
+  # like an empty value. Any other pre-existing value is a real conflict and
+  # still stops, so a genuine workflow state is never silently reset.
+  if test -z "${ig_current_values[2]}" || test "${ig_current_values[2]}" = 'Todo'; then
     ig_run_mutation "14-status-${ig_issue_key}" gh project item-edit --id "$ig_item_id" --project-id "$IG_PROJECT_ID" --field-id "$IG_STATUS_FIELD_ID" --single-select-option-id "$ig_status_option_id" --format json || exit 1
     ig_verify_operation "14-status-${ig_issue_key}" ig_verify_item_field "$ig_item_id" 2 "$ig_status" text || exit 1
     ig_fetch_project_items > "$IG_ITEMS_JSON_FILE"
