@@ -12,13 +12,22 @@
 
 | Field | Type and values | Purpose |
 |---|---|---|
-| Status | Built-in single select: Backlog, Ready, In progress, Review, Done | Only workflow-state source |
+| Status | Built-in single select: exactly Backlog, Ready, In progress, Review, Done | Only workflow-state source |
 | Priority | Single select: MUST, SHOULD, STRETCH, POST-WEEKEND | Scope boundary and ordering |
 | Estimate | Number, hours | Subtask values are primary; epic and umbrella progress is interpreted as native sub-issue roll-up |
 | Parent issue | Built-in hierarchy | Umbrella-to-epic and epic-to-subtask context; M1 is the native milestone |
 | Sub-issues progress | Built-in progress | Evidence-based roll-up without manual percentage fields |
 
 No dates, owners, risk scores, iterations, or automation are added initially.
+
+The Status option list is exact, not a minimum. A new ProjectV2 ships built-in
+`Todo`, `In Progress`, and `Done` options; the two that the table above does not
+name were removed so the live field matches this contract. Removing an option
+clears that value from every item holding it, so an extra option is removed only
+after a complete, paginated scan proves no item uses it, and an extra option in
+use stops for a decision instead. The five retained options keep their original
+option IDs, which is asserted on read-back because resubmitting a name without
+its ID would delete and recreate the option and silently clear item values.
 
 ## Views
 
@@ -27,7 +36,8 @@ No dates, owners, risk scores, iterations, or automation are added initially.
 - Layout: board.
 - Filter: `Priority:MUST`.
 - Group: Status.
-- Primary sort: Priority in the configured field-option order.
+- Primary sort: Priority in the configured field-option order, which is
+  ascending (`MUST`, `SHOULD`, `STRETCH`, `POST-WEEKEND`).
 - Secondary sort: Estimate ascending.
 - Scope: all 34 managed M1 issues (W/E/S), filtered to `Priority:MUST`.
 - Purpose: the smallest actionable strict-MVP view.
@@ -109,3 +119,21 @@ execution-state finalization both passed, so Gate D is closed.
 The only requirement in this document that is not satisfied is the tertiary
 `Title ascending` sort on Full Backlog, which remains `Blocked` by the two-sort
 platform cap described above.
+
+Two corrections were made after Gate D finalization. The user set the MVP Board
+primary sort to the ascending field-option order; the recorded view expectation
+stores that criterion as the direction string `field-option-order`, which does
+not distinguish ascending from descending, so the automated checks could not
+have caught the earlier descending setting. The two non-manifest Status options
+were then removed. Neither correction altered any recorded execution-state
+value: the state stores the Status field ID and the `Backlog` option ID, both of
+which are unchanged, so the finalized state remains accurate and was not
+rewritten. Status is `Measured` for the live field contents and `Implemented`
+for the reconciliation logic.
+
+One property could not be verified. GitHub's GraphQL schema exposes no action or
+configuration detail for `ProjectV2Workflow`, so whether the enabled built-in
+`Item added to project` workflow referenced the removed `Todo` option could not
+be read back. Section 14 already overwrites GitHub's `Todo` default on every
+item it populates, and all 34 items read back as `Backlog` after the removal, so
+no observed item value depends on it.

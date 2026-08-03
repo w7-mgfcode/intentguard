@@ -2400,67 +2400,137 @@ elif test -z "$(ig_state_entry fields Estimate)"; then
 fi
 
 # A new ProjectV2 ships a built-in Status field whose options are Todo,
-# In Progress, and Done. The manifest declares the required workflow states, so
-# the missing ones are appended additively. GitHub's updateProjectV2Field
-# overwrites the option list with exactly what is supplied, so every existing
-# option is refetched and resubmitted with its ID to preserve it; an option
-# submitted with its ID is updated in place rather than replaced. Options are
-# only ever added, never renamed or removed, and the manifest order is
-# authoritative for the final list.
-ig_status_option_payload() {
-  uv run --locked python - "$IG_FIELDS_JSON_FILE" "$IG_MANIFEST_FILE" <<'PY'
-import json,sys
-from pathlib import Path
-remote=json.loads(Path(sys.argv[1]).read_text())["fields"]
-manifest=json.loads(Path(sys.argv[2]).read_text())
-expected=next(f for f in manifest["project"]["fields"] if f["name"]=="Status")["options"]
-rows=[row for row in remote if row.get("name")=="Status"]
-if len(rows)!=1 or not rows[0].get("id"):
-    raise SystemExit("Status field is absent, duplicated, or has no ID")
-existing={option["name"]:option["id"] for option in rows[0].get("options",[]) if option.get("id")}
-if len(existing)!=len(rows[0].get("options",[])):
-    raise SystemExit("Status field has a duplicate or ID-less option")
-# Manifest options first, in declared order, then any pre-existing option the
-# manifest does not name. Nothing is dropped.
-ordered=list(expected)+[name for name in existing if name not in expected]
-payload=[]
-for name in ordered:
-    option={"name":name,"color":"GRAY","description":""}
-    if name in existing:
-        option["id"]=existing[name]
-    payload.append(option)
-print(json.dumps({"field_id":rows[0]["id"],"options":payload,"final_names":ordered,"added":[n for n in expected if n not in existing]},separators=(",",":")))
+# In Progress, and Done. The manifest declares the required workflow states and
+# is authoritative for the final list: missing options are added, and a
+# pre-existing option the manifest does not name is removed. GitHub's
+# updateProjectV2Field overwrites the option list with exactly what is supplied,
+# so every retained option is refetched and resubmitted with its ID; an option
+# submitted with its ID is updated in place rather than replaced, and an option
+# omitted from the payload is deleted.
+#
+# Removal is destructive: deleting an option clears that value from every item
+# holding it. An extra option is therefore removed only when it is provably
+# unused, which is established by scanning every Project item's Status value
+# across all pages. An extra option that is in use is a real workflow state
+# carrying data, so it stops for a decision instead of being silently deleted.
+# An earlier revision of this contract was additive-only and never removed an
+# option. That preserved GitHub's Todo and In Progress defaults alongside the
+# manifest's five states, which left the field permanently inconsistent with
+# `docs/backlog/PROJECT_CONFIGURATION.md`.
+ig_status_option_usage() {
+  uv run --locked python - "$IG_PROJECT_ID" <<'PY'
+import json,subprocess,sys
+# Unpaginated reads silently truncate. Every page is walked and the scan is
+# reconciled against totalCount, so an incomplete scan can never be mistaken
+# for "no item uses this option".
+query="""query($project:ID!,$cursor:String){node(id:$project){... on ProjectV2{
+ items(first:100,after:$cursor){totalCount pageInfo{hasNextPage endCursor}
+  nodes{id fieldValueByName(name:"Status"){
+   ... on ProjectV2ItemFieldSingleSelectValue{name optionId}}}}}}}"""
+usage={}
+cursor=None
+scanned=0
+total=None
+while True:
+    args=["gh","api","graphql","-f","query="+query,"-F","project="+sys.argv[1]]
+    if cursor is not None:
+        args+=["-F","cursor="+cursor]
+    payload=json.loads(subprocess.run(args,capture_output=True,text=True,check=True).stdout)
+    if payload.get("errors"):
+        raise SystemExit("Status usage scan returned GraphQL errors")
+    items=payload["data"]["node"]["items"]
+    total=items["totalCount"]
+    for row in items["nodes"]:
+        scanned+=1
+        value=row.get("fieldValueByName")
+        if value and value.get("name"):
+            usage[value["name"]]=usage.get(value["name"],0)+1
+    if not items["pageInfo"]["hasNextPage"]:
+        break
+    cursor=items["pageInfo"]["endCursor"]
+if scanned!=total:
+    raise SystemExit(f"Status usage scan is incomplete: {scanned} of {total} items")
+print(json.dumps({"scanned":scanned,"total":total,"usage":usage},separators=(",",":")))
 PY
 }
 
-ig_verify_status_options() {
-  gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
+ig_status_option_payload() {
   uv run --locked python - "$IG_FIELDS_JSON_FILE" "$IG_MANIFEST_FILE" "$1" <<'PY'
 import json,sys
 from pathlib import Path
 remote=json.loads(Path(sys.argv[1]).read_text())["fields"]
 manifest=json.loads(Path(sys.argv[2]).read_text())
 expected=next(f for f in manifest["project"]["fields"] if f["name"]=="Status")["options"]
-preserved=json.loads(sys.argv[3])
+usage=json.loads(sys.argv[3])["usage"]
+rows=[row for row in remote if row.get("name")=="Status"]
+if len(rows)!=1 or not rows[0].get("id"):
+    raise SystemExit("Status field is absent, duplicated, or has no ID")
+existing={option["name"]:option["id"] for option in rows[0].get("options",[]) if option.get("id")}
+if len(existing)!=len(rows[0].get("options",[])):
+    raise SystemExit("Status field has a duplicate or ID-less option")
+# The manifest list is the whole final list. An extra option is dropped only
+# when no item holds it; an extra option in use stops for a decision.
+removed=[name for name in existing if name not in expected]
+in_use=sorted(name for name in removed if usage.get(name))
+if in_use:
+    raise SystemExit(f"Status options not in the manifest are in use: {in_use}")
+payload=[]
+for name in expected:
+    option={"name":name,"color":"GRAY","description":""}
+    if name in existing:
+        option["id"]=existing[name]
+    payload.append(option)
+print(json.dumps({"field_id":rows[0]["id"],"options":payload,"final_names":list(expected),"added":[n for n in expected if n not in existing],"removed":removed,"retained":[n for n in expected if n in existing]},separators=(",",":")))
+PY
+}
+
+ig_verify_status_options() {
+  gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
+  local ig_status_usage_readback
+  ig_status_usage_readback="$(ig_status_option_usage)" || return 1
+  uv run --locked python - "$IG_FIELDS_JSON_FILE" "$IG_MANIFEST_FILE" "$1" "$ig_status_usage_readback" <<'PY'
+import json,sys
+from pathlib import Path
+remote=json.loads(Path(sys.argv[1]).read_text())["fields"]
+manifest=json.loads(Path(sys.argv[2]).read_text())
+expected=next(f for f in manifest["project"]["fields"] if f["name"]=="Status")["options"]
+retained=json.loads(sys.argv[3])
+if not isinstance(retained,dict):
+    raise SystemExit("retained option evidence must map name to the pre-mutation ID")
+usage=json.loads(sys.argv[4])["usage"]
 rows=[row for row in remote if row.get("name")=="Status"]
 if len(rows)!=1:
     raise SystemExit("Status field read-back is absent or duplicated")
-names=[option["name"] for option in rows[0].get("options",[])]
-if names[:len(expected)]!=expected:
-    raise SystemExit("Status options do not begin with the manifest order")
-missing=[name for name in preserved if name not in names]
-if missing:
-    raise SystemExit(f"Status option read-back dropped pre-existing options: {missing}")
+options=rows[0].get("options",[])
+names=[option["name"] for option in options]
+if names!=expected:
+    raise SystemExit(f"Status options differ from the manifest: {names}")
 if len(names)!=len(set(names)):
     raise SystemExit("Status option read-back contains duplicates")
+# A retained option must keep its identity. Resubmitting a name without its ID
+# deletes the old option and creates a new one, which silently clears every
+# item value that referenced it, so identity is asserted rather than assumed.
+ids={option["name"]:option["id"] for option in options if option.get("id")}
+if len(ids)!=len(options):
+    raise SystemExit("Status option read-back has an ID-less option")
+for name,option_id in retained.items():
+    if ids.get(name)!=option_id:
+        raise SystemExit(f"retained Status option changed identity: {name}")
+# Removal must not have left an item pointing at a deleted option.
+stray=sorted(name for name in usage if name not in expected)
+if stray:
+    raise SystemExit(f"items still hold non-manifest Status values: {stray}")
 PY
 }
 
 gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
-ig_status_plan="$(ig_status_option_payload)"
-ig_status_added="$(uv run --locked python -c 'import json,sys; print(len(json.loads(sys.argv[1])["added"]))' "$ig_status_plan")"
-ig_status_preserved="$(uv run --locked python -c 'import json,sys; d=json.loads(sys.argv[1]); print(json.dumps([o["name"] for o in d["options"] if "id" in o]))' "$ig_status_plan")"
-if test "$ig_status_added" -gt 0; then
+ig_status_usage="$(ig_status_option_usage)" || exit 1
+ig_status_plan="$(ig_status_option_payload "$ig_status_usage")" || exit 1
+# The field is reconciled when the manifest list is neither extended nor
+# trimmed. Counting only additions would leave a stale extra option in place.
+ig_status_changes="$(uv run --locked python -c 'import json,sys; d=json.loads(sys.argv[1]); print(len(d["added"])+len(d["removed"]))' "$ig_status_plan")"
+ig_status_retained="$(uv run --locked python -c 'import json,sys; d=json.loads(sys.argv[1]); print(json.dumps({o["name"]:o["id"] for o in d["options"] if "id" in o}))' "$ig_status_plan")"
+if test "$ig_status_changes" -gt 0; then
   ig_status_payload_file="${IG_TEMP_DIR}/status-options.json"
   uv run --locked python - "$ig_status_plan" "$ig_status_payload_file" <<'PY'
 import json,sys
@@ -2471,11 +2541,11 @@ Path(sys.argv[2]).write_text(json.dumps({
     "variables":{"fieldId":plan["field_id"],"options":plan["options"]},
 },ensure_ascii=False),encoding="utf-8")
 PY
-  ig_run_mutation '09-extend-status-options' gh api graphql --input "$ig_status_payload_file" || exit 1
-  ig_verify_operation '09-extend-status-options' ig_verify_status_options "$ig_status_preserved" || exit 1
-  ig_state verified '09-extend-status-options'
+  ig_run_mutation '09-reconcile-status-options' gh api graphql --input "$ig_status_payload_file" || exit 1
+  ig_verify_operation '09-reconcile-status-options' ig_verify_status_options "$ig_status_retained" || exit 1
+  ig_state verified '09-reconcile-status-options'
 else
-  ig_verify_operation '09-status-options-current' ig_verify_status_options "$ig_status_preserved" || exit 1
+  ig_verify_operation '09-status-options-current' ig_verify_status_options "$ig_status_retained" || exit 1
 fi
 
 gh project field-list "$IG_PROJECT_NUMBER" --owner "$IG_OWNER" --limit 100 --format json > "$IG_FIELDS_JSON_FILE"
@@ -2497,11 +2567,12 @@ status_options={row["name"]:row["id"] for row in selected["Status"].get("options
 if list(priority_options) != expected["Priority"]["options"]:
     raise SystemExit("Priority options differ from manifest")
 # Priority is created by this runbook, so its option list must match the
-# manifest exactly. Status is a GitHub built-in whose original options are
-# preserved additively, so the manifest options must be its leading prefix and
-# every manifest option must be present; trailing built-ins are permitted.
-if list(status_options)[:len(expected["Status"]["options"])] != expected["Status"]["options"]:
-    raise SystemExit("Status options do not begin with the manifest order")
+# manifest exactly. Status is a GitHub built-in, but the reconciliation above
+# makes the manifest authoritative for its whole option list too, so the same
+# exact-equality rule applies. An earlier revision accepted trailing built-ins
+# here as a leading-prefix match.
+if list(status_options) != expected["Status"]["options"]:
+    raise SystemExit("Status options differ from manifest")
 values=(
     selected["Priority"]["id"], selected["Status"]["id"],
     selected["Estimate"]["id"], selected["Parent issue"]["id"],
@@ -3843,6 +3914,14 @@ priority_options={row["name"]:row["id"] for row in remote_priority.get("options"
 status_options={row["name"]:row["id"] for row in remote_status.get("options",[])}
 if priority_options.get("MUST")!=state["fields"]["Priority"]["options"].get("MUST"): raise SystemExit("MUST option ID mismatch")
 if status_options.get("Backlog")!=state["fields"]["Status"]["options"].get("Backlog"): raise SystemExit("Backlog option ID mismatch")
+# The manifest is authoritative for both managed single-select option lists, so
+# the final verification asserts the whole list, not just the one recorded ID.
+# Checking only Backlog would accept a Status field still carrying GitHub's Todo
+# and In Progress defaults, which is the drift this check exists to catch.
+for name,remote_field in (("Priority",remote_priority),("Status",remote_status)):
+    declared=next(f for f in manifest["project"]["fields"] if f["name"]==name)["options"]
+    if [row["name"] for row in remote_field.get("options",[])]!=declared:
+        raise SystemExit(f"{name} options differ from manifest")
 
 if items_payload.get("errors"): raise SystemExit("Project item query errors")
 remote_items=items_payload["data"]["node"]["items"]["nodes"]
