@@ -4,7 +4,8 @@ seed = 42
 
 [data]
 dataset_id = "PolyAI/banking77"
-dataset_revision = "UNRESOLVED"
+dataset_revision = "1fb62b1bb4635df59a8e1b2f2bc5e0643b2856c8"
+validation_fraction = 0.15
 
 [model]
 base_model_id = "distilbert/distilbert-base-uncased"

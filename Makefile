@@ -8,9 +8,8 @@ help: ## Show the developer command contract
 setup: ## Install the Python 3.11 locked environment
 	uv sync --locked --all-groups
 
-data: ## Download and validate BANKING77 (U02)
-	@printf '%s\n' 'Not implemented — tracked by U02' >&2
-	@false
+data: ## Download, validate, and record pinned BANKING77 provenance (U02)
+	uv run --locked python scripts/prepare_data.py
 
 baseline: ## Train and evaluate the lexical baseline (U03)
 	@printf '%s\n' 'Not implemented — tracked by U03' >&2

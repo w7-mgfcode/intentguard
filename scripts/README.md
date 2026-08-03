@@ -1,3 +1,6 @@
 # Scripts
 
-This directory owns offline developer entry points. Gate A contains only `validate_foundation.py`; data, baseline, transformer, evaluation, and demo scripts are added by U02–U06 and must not be simulated here.
+This directory owns offline developer entry points. `prepare_data.py` implements
+U02 by loading the pinned BANKING77 revision, validating its data contract, and
+writing ignored local provenance. Baseline, transformer, evaluation, and demo
+scripts remain planned under U03–U06.

@@ -125,8 +125,9 @@ def _authored_text_files() -> Iterable[Path]:
         REPOSITORY_ROOT / ".env.example",
     )
     yield from direct
-    for root_name in ("configs", "src", "scripts", "tests", "data", "artifacts", "reports"):
+    for root_name in ("configs", "src", "scripts", "tests", "artifacts", "reports"):
         yield from (REPOSITORY_ROOT / root_name).rglob("*")
+    yield REPOSITORY_ROOT / "data" / "README.md"
     yield from BACKLOG_ROOT.rglob("*")
     for name in ("OPERATIONS.md", "IMPLEMENTATION_STATUS.md", "LIMITATIONS.md"):
         yield REPOSITORY_ROOT / "docs" / name
@@ -148,7 +149,10 @@ def validate_toml_and_project() -> None:
     assert cast(dict[str, object], uv_config["sources"])["torch"] == [
         {"index": "pytorch-cpu"}
     ]
-    assert cast(dict[str, object], config["data"])["dataset_revision"] == "UNRESOLVED"
+    data = cast(dict[str, object], config["data"])
+    assert data["dataset_id"] == "PolyAI/banking77"
+    assert data["dataset_revision"] == "1fb62b1bb4635df59a8e1b2f2bc5e0643b2856c8"
+    assert data["validation_fraction"] == 0.15
     assert cast(dict[str, object], config["model"])["base_model_revision"] == "UNRESOLVED"
     print("PASSED: TOML parsing and pyproject/configuration contract")
 
@@ -157,7 +161,8 @@ def validate_make_contract() -> None:
     makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
     targets = {line.split(":", maxsplit=1)[0] for line in makefile.splitlines() if ": ##" in line}
     assert targets == EXPECTED_TARGETS, f"Unexpected Make targets: {sorted(targets)}"
-    for umbrella in ("U02", "U03", "U04", "U05", "U06"):
+    assert "uv run --locked python scripts/prepare_data.py" in makefile
+    for umbrella in ("U03", "U04", "U05", "U06"):
         assert f"Not implemented — tracked by {umbrella}" in makefile
     print("PASSED: developer command presence and explicit future-command failures")
 
@@ -405,7 +410,8 @@ def validate_generated_roots_and_specification() -> None:
     }
     assert required_ignore_lines <= ignore_lines, "Required .gitignore rules are missing"
 
-    for name in ("data", "artifacts", "reports"):
+    assert (REPOSITORY_ROOT / "data" / "README.md").is_file()
+    for name in ("artifacts", "reports"):
         entries = sorted(path.name for path in (REPOSITORY_ROOT / name).iterdir())
         assert entries == ["README.md"], f"Unexpected generated content under {name}: {entries}"
 
@@ -449,7 +455,7 @@ def validate_placeholders_and_secrets() -> None:
     assert not placeholders, f"Unresolved generic placeholders: {placeholders}"
 
     config_text = (REPOSITORY_ROOT / "configs" / "default.toml").read_text(encoding="utf-8")
-    assert config_text.count('= "UNRESOLVED"') == 2
+    assert config_text.count('= "UNRESOLVED"') == 1
 
     secret_hits: list[str] = []
     for path in REPOSITORY_ROOT.rglob("*"):
@@ -463,7 +469,7 @@ def validate_placeholders_and_secrets() -> None:
         if any(pattern.search(text) for pattern in SECRET_PATTERNS):
             secret_hits.append(str(path.relative_to(REPOSITORY_ROOT)))
     assert not secret_hits, f"Potential secrets detected: {secret_hits}"
-    print("PASSED: placeholder scan (two approved revision gates) and secret-pattern scan")
+    print("PASSED: placeholder scan (one approved model revision gate) and secret-pattern scan")
 
 
 def _run_git(repository_root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
