@@ -98,9 +98,14 @@ it and cannot independently authorize `verified=true`. A pending, blocked,
 manual-required, incomplete, duplicated, or mismatched view is not completed
 and prevents Gate D finalization.
 
-Project configuration is a Gate D remote write. The three views now exist on the
-remote Project with the layouts, filters, columns, grouping, and sort orders
-recorded above, verified by API read-back. Gate D view completion is still
-outstanding: it additionally requires the authenticated read-only UI inspection,
-the user's exact attestation, and one complete verified execution-state record
-per view. All three execution-state records remain `manual-pending`.
+Project configuration is a Gate D remote write. Gate D view completion is
+`Implemented`. The three views exist on the remote Project with the layouts,
+filters, columns, grouping, and sort orders recorded above; the user configured
+every sort order in the GitHub UI and performed the authenticated read-only UI
+inspection; the exact attestation is recorded; and all three execution-state
+records are complete and `verified`. The final read-only verification and
+execution-state finalization both passed, so Gate D is closed.
+
+The only requirement in this document that is not satisfied is the tertiary
+`Title ascending` sort on Full Backlog, which remains `Blocked` by the two-sort
+platform cap described above.

@@ -1050,7 +1050,7 @@ def validate_verified_view(key, record, manifest):
         raise SystemExit(f"verified view lacks authenticated UI identity: {key}")
     if not valid_utc_timestamp(record["verification_timestamp"]):
         raise SystemExit(f"verified view timestamp is invalid: {key}")
-    attestation = "I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md."
+    attestation = "I confirm that the three IntentGuard Project views are configured exactly according to docs/backlog/PROJECT_CONFIGURATION.md, that I configured every required sort order myself in the GitHub UI, and that I verified all three views by authenticated read-only UI inspection."
     if record["attestation_reference"] != attestation:
         raise SystemExit(f"verified view attestation mismatch: {key}")
     if record["verified"] is not True or record["manual_required"] is not False:
@@ -1213,6 +1213,40 @@ elif operation == "manual-view-verified":
     ):
         raise SystemExit("duplicate verified remote view ID")
     state["views"][key] = record
+    validate_view_collection(manifest)
+elif operation == "manual-view-pending-realign":
+    require(1)
+    key = args[0]
+    manifest = manifest_document()
+    views = {view["name"]: view for view in manifest["project"]["views"]}
+    if key not in views:
+        raise SystemExit("realignment target is not a manifest view")
+    existing = state["views"].get(key)
+    if not isinstance(existing, dict):
+        raise SystemExit("realignment target has no recorded view")
+    if existing.get("verified") is True or existing.get("status") != "manual-pending":
+        raise SystemExit("only a pending view record may be realigned")
+    # A realignment is legitimate only as the consequence of an audited manifest
+    # correction. `manifest_document` already proves the manifest on disk matches
+    # the recorded checksum, so requiring that checksum to be a correction
+    # migration's target forbids realigning a pending record onto an unreviewed
+    # manifest edit.
+    history = state.get("migration_history")
+    if not isinstance(history, list) or len(history) < 2 or not isinstance(history[-1], dict):
+        raise SystemExit("realignment requires a recorded manifest-correction migration")
+    if history[-1].get("migration_id") == "hierarchy-v2" or history[-1].get("to_manifest_sha256") != state.get("manifest_sha256"):
+        raise SystemExit("realignment requires the manifest-correction migration chain terminus")
+    expected = expected_view_properties(views[key])
+    if existing.get("expected_properties") == expected:
+        raise SystemExit(0)
+    candidate = {**existing, "expected_properties": expected}
+    validate_pending_view(key, candidate, manifest)
+    if {
+        field for field in set(candidate) | set(existing)
+        if candidate.get(field) != existing.get(field)
+    } != {"expected_properties"}:
+        raise SystemExit("realignment would change more than the manifest expectation")
+    state["views"][key] = candidate
     validate_view_collection(manifest)
 elif operation == "adoption-required":
     require(5)
@@ -1439,6 +1473,20 @@ record only through `manual-view-verified`. Before either operation, the helper
 validates the complete view collection: manifest identifiers and view names
 must be unique, every non-empty remote view ID must be unique, and every record
 must retain the state-owned Project ID and URL.
+
+A pending view record stores the manifest expectation it was derived from, so an
+audited manifest correction can leave a pending record quoting the superseded
+expectation. The correction migration deliberately rewrites only
+`manifest_sha256`, `migration_history`, and `state_sha256`, proving by comparison
+that no recorded Gate D resource changed, so it cannot and must not perform this
+realignment itself. `manual-view-pending-realign` closes that gap for exactly one
+pending view. It recomputes `expected_properties` from the manifest rather than
+accepting a caller-supplied value, refuses a verified record, requires the
+current manifest checksum to be the terminus of a recorded manifest-correction
+migration, asserts that no other field of the record changed, and exits
+successfully without writing when the record already matches. It is therefore
+neither a way to edit execution state by hand nor a way to accept an unreviewed
+manifest edit.
 
 ## 5. Failure-recording and verification wrappers
 
@@ -3299,6 +3347,14 @@ if d.get("manifest_identifier")!=sys.argv[2] or d.get("view_name")!=sys.argv[2]:
 if d.get("verified") is not True and d.get("status")!="manual-pending":
     raise SystemExit("existing view state is neither pending nor verified")
 PY
+    # A pending record quotes the manifest expectation in force when it was
+    # written. After an audited manifest correction that quote is stale, and every
+    # later view check compares against the manifest, so the stale record would
+    # block section 15.3 forever. Realign it here, on the section that owns
+    # pending records, rather than by editing execution state. The operation
+    # recomputes the expectation from the manifest, refuses a verified record, and
+    # writes nothing when the record already agrees.
+    ig_state manual-view-pending-realign "$ig_view_name" || exit 1
     continue
   fi
   ig_pending_view_record="$(uv run --locked python - "$ig_view_row" "$IG_PROJECT_ID" "$IG_PROJECT_URL" <<'PY'
@@ -3339,33 +3395,43 @@ printf '%s\n' \
   '5. Preserve exactly those three views; do not leave a fourth view.' \
   '6. Verify every required layout, filter, column, grouping, and complete sort order.' \
   '7. Record this attestation:' \
-  'I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md.' \
+  'I confirm that the three IntentGuard Project views are configured exactly according to docs/backlog/PROJECT_CONFIGURATION.md, that I configured every required sort order myself in the GitHub UI, and that I verified all three views by authenticated read-only UI inspection.' \
   '8. Request authenticated read-only UI inspection; screenshots alone are insufficient.'
 exit 20
 ```
 
-### 15.2 User-owned manual configuration — REMOTE WRITE, Gate D
+### 15.2 View configuration — REMOTE WRITE, Gate D
 
-Only the user performs these UI mutations:
+Sort order is user-owned: no GraphQL input type expresses a sort, so only the
+user can configure sorting, and only in the UI. Name, layout, filter, and
+visible columns may be set either by the user in the UI or by an automated
+`createProjectV2View` / `updateProjectV2View` step.
 
 1. Open the recorded Project URL.
 2. If section 8 recorded an implicit default view, rename and configure that
    exact view as **MVP Board**. If none was recorded, create **MVP Board**.
+   Renaming is mandatory when a default view was recorded: section 15.3 rejects
+   a changed default-view identity, so the recorded node ID must survive.
 3. Configure **MVP Board** as a board filtered by `Priority:MUST`, grouped by
    Status, sorted first by Priority in field-option order and then by Estimate
-   ascending.
+   ascending. Setting the board layout makes GitHub populate the Status vertical
+   grouping on its own.
 4. Create **Full Backlog** as a table with no active filter, the exact columns
    Status, Priority, Parent issue, Estimate, Labels, and the sort sequence
-   Priority option order, Parent issue ascending, Title ascending.
+   Priority option order then Parent issue ascending. GitHub accepts at most two
+   sort criteria per view, so no third criterion can be configured here.
 5. Create **Umbrella Progress** as a table filtered semantically by the exact
    `type:umbrella` label, with Status, Priority, Estimate, Sub-issues progress,
    sorted by Title ascending. Quoted or UI-normalized filter syntax is allowed
    only when it selects that exact label.
 6. Preserve exactly these three views. Do not create a fourth view and do not
    delete or replace the recorded default view.
-7. Supply this exact attestation:
+7. Confirm in the UI that each sort order actually saved. A sort chosen from a
+   column header stays transient view state until it is explicitly saved, so an
+   unsaved sort looks correct in the browser and reads back as absent.
+8. Supply this exact attestation:
 
-   `I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md.`
+   `I confirm that the three IntentGuard Project views are configured exactly according to docs/backlog/PROJECT_CONFIGURATION.md, that I configured every required sort order myself in the GitHub UI, and that I verified all three views by authenticated read-only UI inspection.`
 
 The manual UI work is not completed evidence. It must be followed by a
 separate authenticated, read-only UI inspection.
@@ -3391,7 +3457,7 @@ is:
   "verification_method": "authenticated-github-ui",
   "verification_timestamp": "<ISO-8601 UTC timestamp ending in Z>",
   "inspection_reference": "<non-empty UI inspection reference>",
-  "attestation_reference": "I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md.",
+  "attestation_reference": "I confirm that the three IntentGuard Project views are configured exactly according to docs/backlog/PROJECT_CONFIGURATION.md, that I configured every required sort order myself in the GitHub UI, and that I verified all three views by authenticated read-only UI inspection.",
   "screenshot_only": false,
   "views": [
     {
@@ -3430,7 +3496,7 @@ remote_payload=json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
 remote_views=remote_payload.get("views",remote_payload if isinstance(remote_payload,list) else [])
 owner=manifest["repository"]["owner"]
 project=state["project"]
-attestation="I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md."
+attestation="I confirm that the three IntentGuard Project views are configured exactly according to docs/backlog/PROJECT_CONFIGURATION.md, that I configured every required sort order myself in the GitHub UI, and that I verified all three views by authenticated read-only UI inspection."
 if evidence.get("authenticated_account")!=owner or evidence.get("verification_method")!="authenticated-github-ui":
     raise SystemExit("authenticated UI identity mismatch")
 if evidence.get("project_id")!=project.get("id") or evidence.get("project_url")!=project.get("url"):
@@ -3484,10 +3550,23 @@ check_names={
     "filter_verified", "visible_fields_verified", "group_by_verified",
     "sort_verified", "exact_view_set_verified", "inspection_completed",
 }
+def remote_view_url(row):
+    # ProjectV2View exposes no url or html_url field, so the view URL is derived
+    # from the Project URL and the view number exactly as section 8 does. Reading
+    # a url key here would always be empty and reject every valid observation.
+    direct=str(row.get("html_url") or row.get("url") or "")
+    if direct:
+        return direct
+    try:
+        number=int(row.get("number"))
+    except (TypeError,ValueError):
+        return ""
+    return f'{str(project["url"]).rstrip("/")}/views/{number}' if number>=1 else ""
+
 for row in rows:
     name=row["name"]; checks=row.get("checks")
     remote_row=remote_by_id[row["remote_view_id"]]
-    remote_url=str(remote_row.get("html_url") or remote_row.get("url") or "")
+    remote_url=remote_view_url(remote_row)
     if not remote_url or remote_url!=row["remote_view_url"]:
         raise SystemExit(f"remote view URL differs from UI evidence: {name}")
     observed=row.get("observed_properties")
@@ -3549,7 +3628,7 @@ uv run --locked python - <<'PY'
 from copy import deepcopy
 
 names={"MVP Board","Full Backlog","Umbrella Progress"}
-attestation="I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md."
+attestation="I confirm that the three IntentGuard Project views are configured exactly according to docs/backlog/PROJECT_CONFIGURATION.md, that I configured every required sort order myself in the GitHub UI, and that I verified all three views by authenticated read-only UI inspection."
 expected={
     "MVP Board":{"name":"MVP Board","layout":"board","filter":"Priority:MUST","columns":[],"group_by":"Status","sort":["Priority","Estimate"],"sort_directions":["field-option-order","ascending"]},
     "Full Backlog":{"name":"Full Backlog","layout":"table","filter":"no-active-filter","columns":["Status","Priority","Parent issue","Estimate","Labels"],"group_by":None,"sort":["Priority","Parent issue"],"sort_directions":["field-option-order","ascending"]},
@@ -3646,7 +3725,11 @@ while IFS= read -r -d '' ig_relationship_row; do
   mapfile -d '' -t ig_relationship_values < <(ig_json_fields "$ig_relationship_row" key child)
   ig_child_state="$(ig_state_entry issues "${ig_relationship_values[1]}")"
   ig_child_id="$(uv run --locked python -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$ig_child_state")"
-  ig_child_parent_json "$ig_child_id" >> "${IG_TEMP_DIR}/verify-relationships.jsonl"
+  # `gh api` emits no trailing newline, so appending its output directly
+  # concatenated all 31 responses onto one line and the JSONL reader below failed
+  # with "Extra data". Capture, check, and terminate each record explicitly.
+  ig_child_parent_payload="$(ig_child_parent_json "$ig_child_id")" || exit 1
+  printf '%s\n' "$ig_child_parent_payload" >> "${IG_TEMP_DIR}/verify-relationships.jsonl"
 done < <(ig_manifest_stream relationships)
 
 uv run --locked python - \
@@ -3777,11 +3860,18 @@ for issue in manifest["issues"]:
     if issue.get("estimate_hours") is not None and float(values.get(state["fields"]["Estimate"]["id"]))!=float(issue["estimate_hours"]): raise SystemExit(f"Estimate mismatch: {issue['id']}")
     if values.get(state["fields"]["Status"]["id"])!="Backlog": raise SystemExit(f"Status mismatch: {issue['id']}")
 
-edges=[(group["parent"],child) for group in manifest["relationships"] for child in group["children"]]
+# The manifest records 31 flat parent/child rows; an earlier revision grouped
+# children under each parent, and reading `group["children"]` here aborted the
+# whole final verification with a KeyError.
+edges=[(row["parent"],row["child"]) for row in manifest["relationships"]]
 if len(relationship_lines)!=31 or len(edges)!=31: raise SystemExit("relationship count mismatch")
 for (parent,child),payload in zip(edges,relationship_lines,strict=True):
     if payload.get("errors"): raise SystemExit("relationship GraphQL errors")
-    actual_parent=payload["data"]["node"].get("parent")
+    node=payload["data"]["node"]
+    # Positional zip alone would silently accept a reordered evidence file, so the
+    # read-back is anchored to the child issue it must describe.
+    if not node or node.get("id")!=state["issues"][child]["id"]: raise SystemExit(f"relationship evidence is not for the expected child: {parent}->{child}")
+    actual_parent=node.get("parent")
     if not actual_parent or actual_parent["id"]!=state["issues"][parent]["id"]: raise SystemExit(f"relationship mismatch: {parent}->{child}")
 
 directions={
@@ -3809,7 +3899,7 @@ remote_names=[row.get("name") for row in remote_views]
 if any(not value for value in remote_ids) or len(set(remote_ids))!=3 or set(remote_names)!=set(expected_views):
     raise SystemExit("remote view names or IDs are missing, duplicated, or unexpected")
 remote_by_id={str(row.get("id") or row.get("node_id") or ""):row for row in remote_views}
-attestation="I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md."
+attestation="I confirm that the three IntentGuard Project views are configured exactly according to docs/backlog/PROJECT_CONFIGURATION.md, that I configured every required sort order myself in the GitHub UI, and that I verified all three views by authenticated read-only UI inspection."
 required_checks={
     "authenticated_account_verified", "project_identity_verified",
     "view_identity_verified", "name_verified", "layout_verified",
@@ -3855,7 +3945,16 @@ for name,expected in expected_views.items():
     if remote_ids.count(record["remote_view_id"])!=1 or remote_names.count(name)!=1:
         raise SystemExit(f"remote view identity mismatch: {name}")
     remote_row=remote_by_id[record["remote_view_id"]]
+    # ProjectV2View exposes no url or html_url field, so derive the view URL from
+    # the Project URL and view number exactly as section 8 does.
     remote_url=str(remote_row.get("html_url") or remote_row.get("url") or "")
+    if not remote_url:
+        try:
+            remote_number=int(remote_row.get("number"))
+        except (TypeError,ValueError):
+            remote_number=0
+        if remote_number>=1:
+            remote_url=f'{str(state["project"]["url"]).rstrip("/")}/views/{remote_number}'
     if not remote_url or remote_url!=record["remote_view_url"]:
         raise SystemExit(f"remote view URL mismatch: {name}")
     verified_ids.append(record["remote_view_id"])
