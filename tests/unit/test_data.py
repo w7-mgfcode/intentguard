@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from datasets import (  # type: ignore[import-untyped]
@@ -14,7 +17,7 @@ from datasets import (  # type: ignore[import-untyped]
 
 from intentguard.config import FoundationConfig, load_foundation_config
 from intentguard.data import (
-    LABEL_COUNT,
+    CANONICAL_LABEL_NAMES,
     DataContractError,
     load_pinned_dataset,
     prepare_dataset,
@@ -34,9 +37,9 @@ def _config(tmp_path: Path) -> FoundationConfig:
 
 
 def _source_dataset(
-    *, duplicate_test_text: bool = False, label_count: int = LABEL_COUNT
+    *, duplicate_test_text: bool = False, label_names: tuple[str, ...] = CANONICAL_LABEL_NAMES
 ) -> DatasetDict:
-    label_names = [f"intent_{index:02d}" for index in range(label_count)]
+    label_count = len(label_names)
     features = Features(
         {
             "text": Value("string"),
@@ -81,7 +84,7 @@ def test_preparation_preserves_canonical_test_and_is_deterministic(tmp_path: Pat
     assert all(example.example_id.startswith("train:") for example in first.train)
     assert all(example.example_id.startswith("train:") for example in first.validation)
     assert all(example.example_id.startswith("test:") for example in first.test)
-    assert first.label_names == tuple(f"intent_{index:02d}" for index in range(LABEL_COUNT))
+    assert first.label_names == CANONICAL_LABEL_NAMES
     assert first.provenance["split_fingerprints"] == second.provenance["split_fingerprints"]
     assert first.provenance["label_map_sha256"] == second.provenance["label_map_sha256"]
     duplicate_statistics = first.provenance["duplicate_text_statistics"]
@@ -102,19 +105,32 @@ def test_preparation_rejects_missing_text_column(tmp_path: Path) -> None:
 
 
 def test_preparation_rejects_noncanonical_classlabel_mapping(tmp_path: Path) -> None:
-    source = _source_dataset(label_count=LABEL_COUNT - 1)
+    source = _source_dataset(label_names=CANONICAL_LABEL_NAMES[:-1])
 
     with pytest.raises(DataContractError, match="exactly 77 unique label names"):
         prepare_dataset(source, _config(tmp_path))
 
 
+@pytest.mark.parametrize(
+    "label_names",
+    [
+        CANONICAL_LABEL_NAMES[1:2] + CANONICAL_LABEL_NAMES[0:1] + CANONICAL_LABEL_NAMES[2:],
+        ("renamed_intent", *CANONICAL_LABEL_NAMES[1:]),
+    ],
+)
+def test_preparation_rejects_reordered_or_renamed_classlabel_mapping(
+    tmp_path: Path, label_names: tuple[str, ...]
+) -> None:
+    with pytest.raises(DataContractError, match="approved canonical order"):
+        prepare_dataset(_source_dataset(label_names=label_names), _config(tmp_path))
+
+
 def test_prepared_validation_rejects_split_overlap() -> None:
-    label_names = tuple(f"intent_{index:02d}" for index in range(LABEL_COUNT))
     example = CanonicalExample(
         example_id="train:000001",
         text="A valid request",
         label_id=0,
-        label_name=label_names[0],
+        label_name=CANONICAL_LABEL_NAMES[0],
         split="train",
     )
     overlapping_test_example = replace(example, split="test")
@@ -122,7 +138,7 @@ def test_prepared_validation_rejects_split_overlap() -> None:
         train=(example,),
         validation=(),
         test=(overlapping_test_example,),
-        label_names=label_names,
+        label_names=CANONICAL_LABEL_NAMES,
         provenance={},
     )
 
@@ -175,3 +191,63 @@ def test_pinned_loader_wraps_cache_error_with_source_identity(
     assert "connect once" in str(error.value)
     assert "cache" in str(error.value)
     assert isinstance(error.value.__cause__, OSError)
+
+
+def test_pinned_loader_rejects_non_datasetdict_with_source_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _config(tmp_path)
+
+    def invalid_load_dataset(*args: object, **kwargs: object) -> object:
+        return {"train": "not a DatasetDict"}
+
+    monkeypatch.setattr("intentguard.data.load_dataset", invalid_load_dataset)
+
+    with pytest.raises(DataContractError, match="DatasetDict") as error:
+        load_pinned_dataset(config)
+
+    assert config.dataset_id in str(error.value)
+    assert config.dataset_revision in str(error.value)
+
+
+def test_write_provenance_uses_unique_atomic_temp_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prepared = prepare_dataset(_source_dataset(), _config(tmp_path))
+    output_directory = tmp_path / "concurrent-provenance"
+    barrier = Barrier(2)
+    original_replace = Path.replace
+
+    def synchronized_replace(source: Path, destination: Path) -> Path:
+        if source.parent == output_directory and source.name.startswith("provenance"):
+            barrier.wait(timeout=5)
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(Path, "replace", synchronized_replace)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        destinations = list(
+            executor.map(lambda _: write_provenance(prepared, output_directory), range(2))
+        )
+
+    assert destinations == [output_directory / "provenance.json"] * 2
+    assert json.loads((output_directory / "provenance.json").read_text(encoding="utf-8")) == (
+        prepared.provenance
+    )
+    assert list(output_directory.glob("*.tmp")) == []
+
+
+def test_write_provenance_cleans_its_temp_file_after_replace_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prepared = prepare_dataset(_source_dataset(), _config(tmp_path))
+    output_directory = tmp_path / "failed-provenance"
+
+    def failing_replace(source: Path, destination: Path) -> Path:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(Path, "replace", failing_replace)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        write_provenance(prepared, output_directory)
+
+    assert list(output_directory.glob("*.tmp")) == []

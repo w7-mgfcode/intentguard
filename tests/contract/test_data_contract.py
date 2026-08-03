@@ -13,15 +13,25 @@ from datasets import (  # type: ignore[import-untyped]
 )
 
 from intentguard.config import BANKING77_DATASET_REVISION, load_foundation_config
-from intentguard.data import LABEL_COUNT, DataContractError, prepare_dataset
+from intentguard.data import (
+    CANONICAL_LABEL_MAP_SHA256,
+    CANONICAL_LABEL_NAMES,
+    LABEL_COUNT,
+    DataContractError,
+    prepare_dataset,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+SYNTHETIC_SPLIT_FINGERPRINTS = {
+    "train": "0f8b67c24d006cca95206d772cf385ea54c7de9e827c758b6f76775916c28e1c",
+    "validation": "b50de7cd3b15e7dab510fa5d78a6efed8872f7fee76ed278029a7e27b4a67aa4",
+    "test": "bb3573f0f18a1cf109cb490605e3df014e168a70d4681fc90677d008bc18af9a",
+}
 
 
 def _valid_source() -> DatasetDict:
-    label_names = [f"intent_{index:02d}" for index in range(LABEL_COUNT)]
     features = Features(
-        {"text": Value("string"), "label": ClassLabel(names=label_names)}
+        {"text": Value("string"), "label": ClassLabel(names=CANONICAL_LABEL_NAMES)}
     )
     return DatasetDict(
         {
@@ -62,7 +72,16 @@ def test_data_contract_has_pinned_revision_and_expected_provenance(tmp_path: Pat
         "validation": 1_501,
         "test": 3_080,
     }
-    assert len(prepared.label_names) == LABEL_COUNT
+    assert prepared.provenance["validation"] == {
+        "fraction": 0.15,
+        "seed": 42,
+        "strategy": "StratifiedShuffleSplit",
+        "source_split": "train",
+    }
+    assert prepared.label_names == CANONICAL_LABEL_NAMES
+    assert prepared.provenance["label_names"] == list(CANONICAL_LABEL_NAMES)
+    assert prepared.provenance["label_map_sha256"] == CANONICAL_LABEL_MAP_SHA256
+    assert prepared.provenance["split_fingerprints"] == SYNTHETIC_SPLIT_FINGERPRINTS
 
 
 def test_data_contract_rejects_source_split_count_drift(tmp_path: Path) -> None:
