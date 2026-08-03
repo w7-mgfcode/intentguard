@@ -33,8 +33,10 @@ def _config(tmp_path: Path) -> FoundationConfig:
     )
 
 
-def _source_dataset(*, duplicate_test_text: bool = False) -> DatasetDict:
-    label_names = [f"intent_{index:02d}" for index in range(LABEL_COUNT)]
+def _source_dataset(
+    *, duplicate_test_text: bool = False, label_count: int = LABEL_COUNT
+) -> DatasetDict:
+    label_names = [f"intent_{index:02d}" for index in range(label_count)]
     features = Features(
         {
             "text": Value("string"),
@@ -51,14 +53,14 @@ def _source_dataset(*, duplicate_test_text: bool = False) -> DatasetDict:
             "train": Dataset.from_dict(
                 {
                     "text": [f"train text {index}" for index in range(train_size)],
-                    "label": [index % LABEL_COUNT for index in range(train_size)],
+                    "label": [index % label_count for index in range(train_size)],
                 },
                 features=features,
             ),
             "test": Dataset.from_dict(
                 {
                     "text": test_texts,
-                    "label": [index % LABEL_COUNT for index in range(test_size)],
+                    "label": [index % label_count for index in range(test_size)],
                 },
                 features=features,
             ),
@@ -96,6 +98,13 @@ def test_preparation_rejects_missing_text_column(tmp_path: Path) -> None:
     source["train"] = source["train"].remove_columns("text")
 
     with pytest.raises(DataContractError, match="text and label"):
+        prepare_dataset(source, _config(tmp_path))
+
+
+def test_preparation_rejects_noncanonical_classlabel_mapping(tmp_path: Path) -> None:
+    source = _source_dataset(label_count=LABEL_COUNT - 1)
+
+    with pytest.raises(DataContractError, match="exactly 77 unique label names"):
         prepare_dataset(source, _config(tmp_path))
 
 
@@ -146,3 +155,23 @@ def test_pinned_loader_uses_configuration_and_writes_deterministic_provenance(
     }
     assert destination.read_text(encoding="utf-8").endswith("\n")
     assert destination.parent == tmp_path / f"banking77-{config.dataset_revision}"
+
+
+def test_pinned_loader_wraps_cache_error_with_source_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _config(tmp_path)
+
+    def unavailable_load_dataset(*args: object, **kwargs: object) -> DatasetDict:
+        raise OSError("simulated offline dataset service")
+
+    monkeypatch.setattr("intentguard.data.load_dataset", unavailable_load_dataset)
+
+    with pytest.raises(DataContractError) as error:
+        load_pinned_dataset(config)
+
+    assert config.dataset_id in str(error.value)
+    assert config.dataset_revision in str(error.value)
+    assert "connect once" in str(error.value)
+    assert "cache" in str(error.value)
+    assert isinstance(error.value.__cause__, OSError)

@@ -39,7 +39,8 @@ def load_pinned_dataset(config: FoundationConfig) -> DatasetDict:
         )
     except Exception as error:
         raise DataContractError(
-            "Unable to load the pinned BANKING77 revision; connect once to populate "
+            f"Unable to load {config.dataset_id}@{config.dataset_revision}; "
+            "connect once to populate "
             f"the verified cache at {cache_dir} or restore a cache with matching provenance."
         ) from error
     if not isinstance(loaded, DatasetDict):
