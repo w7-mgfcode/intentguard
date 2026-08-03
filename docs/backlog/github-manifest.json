@@ -211,8 +211,7 @@
         ],
         "sort": [
           "Priority",
-          "Parent issue",
-          "Title"
+          "Parent issue"
         ],
         "purpose": "Inspect all 34 created issues without mixing in parking-lot prose."
       },

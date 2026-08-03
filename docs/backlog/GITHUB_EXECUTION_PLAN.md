@@ -999,7 +999,7 @@ def manifest_document():
 def expected_view_properties(view):
     directions = {
         "MVP Board": ["field-option-order", "ascending"],
-        "Full Backlog": ["field-option-order", "ascending", "ascending"],
+        "Full Backlog": ["field-option-order", "ascending"],
         "Umbrella Progress": ["ascending"],
     }
     normalized_filter = "no-active-filter" if view["name"] == "Full Backlog" else view["filter"]
@@ -3294,7 +3294,7 @@ from datetime import datetime,timezone
 view=json.loads(sys.argv[1])
 directions={
     "MVP Board":["field-option-order","ascending"],
-    "Full Backlog":["field-option-order","ascending","ascending"],
+    "Full Backlog":["field-option-order","ascending"],
     "Umbrella Progress":["ascending"],
 }
 expected={
@@ -3434,7 +3434,7 @@ if not timestamp.endswith("Z") or parsed.tzinfo is None or not evidence.get("ins
 
 directions={
     "MVP Board":["field-option-order","ascending"],
-    "Full Backlog":["field-option-order","ascending","ascending"],
+    "Full Backlog":["field-option-order","ascending"],
     "Umbrella Progress":["ascending"],
 }
 def normalize_filter(name, value):
@@ -3539,7 +3539,7 @@ names={"MVP Board","Full Backlog","Umbrella Progress"}
 attestation="I confirm that I manually configured the three IntentGuard Project views exactly according to docs/backlog/PROJECT_CONFIGURATION.md."
 expected={
     "MVP Board":{"name":"MVP Board","layout":"board","filter":"Priority:MUST","columns":[],"group_by":"Status","sort":["Priority","Estimate"],"sort_directions":["field-option-order","ascending"]},
-    "Full Backlog":{"name":"Full Backlog","layout":"table","filter":"no-active-filter","columns":["Status","Priority","Parent issue","Estimate","Labels"],"group_by":None,"sort":["Priority","Parent issue","Title"],"sort_directions":["field-option-order","ascending","ascending"]},
+    "Full Backlog":{"name":"Full Backlog","layout":"table","filter":"no-active-filter","columns":["Status","Priority","Parent issue","Estimate","Labels"],"group_by":None,"sort":["Priority","Parent issue"],"sort_directions":["field-option-order","ascending"]},
     "Umbrella Progress":{"name":"Umbrella Progress","layout":"table","filter":"label:type:umbrella","columns":["Status","Priority","Estimate","Sub-issues progress"],"group_by":None,"sort":["Title"],"sort_directions":["ascending"]},
 }
 
@@ -3773,7 +3773,7 @@ for (parent,child),payload in zip(edges,relationship_lines,strict=True):
 
 directions={
     "MVP Board":["field-option-order","ascending"],
-    "Full Backlog":["field-option-order","ascending","ascending"],
+    "Full Backlog":["field-option-order","ascending"],
     "Umbrella Progress":["ascending"],
 }
 expected_views={}

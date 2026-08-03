@@ -39,8 +39,15 @@ No dates, owners, risk scores, iterations, or automation are added initially.
 - Required columns: Status, Priority, Parent issue, Estimate, Labels.
 - Primary sort: Priority in the configured field-option order.
 - Secondary sort: Parent issue ascending.
-- Tertiary sort: Title ascending.
 - Purpose: inspect all 34 created W/E/S issues without mixing in parking-lot prose.
+
+A tertiary `Title ascending` sort was originally specified here and is
+`Blocked` by the platform. GitHub Projects accepts at most two sort criteria per
+view. This was confirmed in the UI and independently against the GraphQL API:
+the `sort:title-asc` filter term does not register as a third sort, and no
+input type in the schema exposes a sort or grouping input at all
+(`ProjectV2ViewConfigurationInput` contains only `visibleFieldIds`). Two sort
+criteria are therefore the complete, verifiable requirement for this view.
 
 ### Umbrella Progress
 
@@ -54,12 +61,26 @@ No dates, owners, risk scores, iterations, or automation are added initially.
 
 ## Configuration and verification method
 
-The user manually configures these three views after the automated Gate D
-workflow has created and verified the Project, issues, hierarchy, items,
-fields, and field values. Automated view mutation is prohibited for this
-approved configuration because the available GitHub CLI/API interfaces cannot
-express and read back every required grouping and multi-field sorting
-property.
+These three views are configured after the automated Gate D workflow has
+created and verified the Project, issues, hierarchy, items, fields, and field
+values.
+
+Sort order must be configured by the user in the GitHub UI. No GraphQL input
+type expresses a sort, so sorting can be read back but never written by an
+automated step.
+
+The remaining properties are API-writable and were configured that way:
+`createProjectV2View` and `updateProjectV2View` set name, layout, filter, and
+visible columns, and setting `BOARD_LAYOUT` makes GitHub populate
+`verticalGroupByFields` with Status on its own. An earlier revision of this
+document stated that automated view mutation was prohibited because the
+available interfaces could not express any required grouping or sorting
+property. That was correct for sorting and incorrect for grouping, layout,
+filter, and columns.
+
+Any automated view creation must preserve the recorded default view's node ID
+by renaming it rather than replacing it, because the runbook rejects a changed
+default-view identity.
 
 Gate D view completion requires all of the following:
 
@@ -77,4 +98,9 @@ it and cannot independently authorize `verified=true`. A pending, blocked,
 manual-required, incomplete, duplicated, or mismatched view is not completed
 and prevents Gate D finalization.
 
-Project configuration is a Gate D remote write and remains unexecuted.
+Project configuration is a Gate D remote write. The three views now exist on the
+remote Project with the layouts, filters, columns, grouping, and sort orders
+recorded above, verified by API read-back. Gate D view completion is still
+outstanding: it additionally requires the authenticated read-only UI inspection,
+the user's exact attestation, and one complete verified execution-state record
+per view. All three execution-state records remain `manual-pending`.
