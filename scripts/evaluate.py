@@ -7,11 +7,18 @@ The order of operations here is the correctness control, not a convention:
    the locally prepared splits, or the run fails;
 3. the threshold is read from the transformer bundle, never selected here;
 4. each model predicts over the test split through its reloaded artifact only;
-5. metrics come from the shared metric function, and the report is written.
+5. every probability matrix is proven to be row-stochastic *before* any confidence
+   derived from it is consumed;
+6. metrics, selective prediction, calibration, and the risk/coverage curve all come
+   from one pass over those probabilities, so the test split is read exactly once;
+7. latency is measured last, from the same reloaded artifacts, and the report is
+   written.
 
 Nothing in this script fits, trains, or tunes. It calls neither `fit_pipeline` nor
 `select_threshold`, so no test label can reach a modelling decision: the only
-thing a test label is allowed to influence is a reported number.
+thing a test label is allowed to influence is a reported number. The risk/coverage
+curve is a description of the trade-off, not a selection — no point on it is
+chosen, and writing it down is not the same as tuning to it.
 
 Per AC-004 the outcome is reported whichever way it falls. A transformer that
 loses to the lexical baseline is a measured result, and this script writes it down
@@ -22,12 +29,14 @@ from __future__ import annotations
 
 import json
 import platform
+from collections.abc import Callable
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Final
 
 import joblib  # type: ignore[import-untyped]
 import numpy as np
+import torch
 from numpy.typing import NDArray
 
 from intentguard.artifacts import (
@@ -54,13 +63,30 @@ from intentguard.evaluation import (
     render_comparison_markdown,
     resolve_shared_identity,
 )
+from intentguard.latency import (
+    LATENCY_CAVEAT,
+    MEASURED_REQUESTS,
+    SAMPLE_SEED,
+    WARM_UP_REQUESTS,
+    LatencyError,
+    LatencyMeasurement,
+    latency_environment,
+    measure_latency,
+    select_latency_samples,
+)
 from intentguard.metrics import (
+    CALIBRATION_BIN_COUNT,
+    CALIBRATION_BINNING,
     METRIC_VERSION,
+    CalibrationMetrics,
     ClassificationMetrics,
+    calibration_payload,
+    compute_calibration_metrics,
     compute_classification_metrics,
     metrics_payload,
 )
 from intentguard.schemas import CanonicalExample, PreparedDataset
+from intentguard.threshold import CoveragePoint, coverage_curve
 from intentguard.training import (
     TrainingError,
     confidences_from_probabilities,
@@ -215,6 +241,73 @@ def _transformer_predictions(
     return probabilities
 
 
+def _token_lengths(
+    bundle: ArtifactBundle, texts: list[str], config: FoundationConfig
+) -> list[int]:
+    """Tokenise once to record what the latency samples actually represent.
+
+    Reported so a reader can see the spread that produced p95. This runs outside
+    the timed region and is not part of any measurement.
+    """
+
+    tokenizer = load_tokenizer_from_directory(
+        bundle.directory_path(TRANSFORMER_TOKENIZER_DIRECTORY)
+    )
+    encoded = tokenizer(
+        texts,
+        truncation=True,
+        max_length=config.training.max_sequence_length,
+    )
+    return [len(ids) for ids in encoded["input_ids"]]
+
+
+def _baseline_single_request(
+    bundle: ArtifactBundle, label_count: int
+) -> Callable[[str], None]:
+    """Build a one-text baseline predictor for timing.
+
+    The model is loaded once, before timing, because a request in service does not
+    pay artifact load and re-hashing. Vectorisation stays inside the timed call,
+    since a request genuinely pays it.
+    """
+
+    model = joblib.load(bundle.path(BASELINE_MODEL_FILENAME))
+
+    def predict_one(text: str) -> None:
+        baseline_probabilities(model, [text], label_count=label_count)
+
+    return predict_one
+
+
+def _transformer_single_request(
+    bundle: ArtifactBundle, config: FoundationConfig, label_names: tuple[str, ...]
+) -> Callable[[str], None]:
+    """Build a one-text transformer predictor for timing, tokenisation included."""
+
+    device = resolve_device()
+    tokenizer = load_tokenizer_from_directory(
+        bundle.directory_path(TRANSFORMER_TOKENIZER_DIRECTORY)
+    )
+    model = move_to_device(
+        load_model_from_directory(
+            bundle.directory_path(TRANSFORMER_MODEL_DIRECTORY), label_names
+        ),
+        device,
+    )
+
+    def predict_one(text: str) -> None:
+        transformer_probabilities(
+            model,
+            tokenizer,
+            [text],
+            label_count=len(label_names),
+            training=config.training,
+            device=device,
+        )
+
+    return predict_one
+
+
 def _run_identity_payload(
     *,
     identity: SharedDataIdentity,
@@ -242,7 +335,88 @@ def _run_identity_payload(
         "comparison_metric": COMPARISON_METRIC,
         "comparison_tolerance": COMPARISON_TOLERANCE,
         "report_schema_version": REPORT_SCHEMA_VERSION,
+        "calibration_bin_count": CALIBRATION_BIN_COUNT,
+        "calibration_binning": CALIBRATION_BINNING,
+        # The latency *protocol* is part of the identity; the measured durations are
+        # not. Including a duration would give two runs of one configuration two
+        # different run IDs, which is what D14 exists to prevent.
+        "latency_warm_up_requests": WARM_UP_REQUESTS,
+        "latency_measured_requests": MEASURED_REQUESTS,
+        "latency_sample_seed": SAMPLE_SEED,
     }
+
+
+def _risk_coverage_payload(curve: tuple[CoveragePoint, ...]) -> list[dict[str, object]]:
+    """Render the full risk/coverage curve over the test split.
+
+    Computed with the same `coverage_curve` used during validation-only threshold
+    selection, so the curve a reader plots here has identical semantics to the one
+    the threshold was chosen from. This is a description of the trade-off, not a
+    selection: no point on it is chosen, and `select_threshold` is never called.
+    """
+
+    return [
+        {
+            "threshold": point.threshold,
+            "coverage": point.coverage,
+            "accepted_count": point.accepted_count,
+            "accepted_accuracy": point.accepted_accuracy,
+            "selective_risk": point.selective_risk,
+        }
+        for point in curve
+    ]
+
+
+def _append_calibration_limitations(
+    report: dict[str, object],
+    *,
+    baseline: CalibrationMetrics,
+    transformer: CalibrationMetrics,
+) -> None:
+    """Record what the measured calibration means, derived from the numbers.
+
+    Stated in the JSON as well as the Markdown, because a consumer that reads only
+    `comparison.json` would otherwise see a low threshold and a confidence field
+    with nothing to warn it that neither is a probability of correctness.
+
+    Every sentence here is computed from this run's values. Hard-coding the
+    direction would let a later run that happens to be overconfident publish a
+    limitation asserting the opposite.
+    """
+
+    limitations = report["limitations"]
+    if not isinstance(limitations, list):
+        raise EvaluationError("The limitations block must be a list")
+
+    for name, calibration in (("baseline", baseline), ("transformer", transformer)):
+        gap = calibration.mean_confidence - calibration.accuracy
+        if gap < 0.0:
+            direction = (
+                f"underconfident: mean confidence {calibration.mean_confidence:.4f} "
+                f"below accuracy {calibration.accuracy:.4f}"
+            )
+        elif gap > 0.0:
+            direction = (
+                f"overconfident: mean confidence {calibration.mean_confidence:.4f} "
+                f"above accuracy {calibration.accuracy:.4f}"
+            )
+        else:
+            direction = (
+                f"aggregate-equal at {calibration.accuracy:.4f}, which is not per-bin "
+                "calibration"
+            )
+        limitations.append(
+            f"The {name} model is {direction} "
+            f"(ECE {calibration.expected_calibration_error:.4f})."
+        )
+
+    occupied = [entry for entry in transformer.bins if entry.count > 0]
+    if occupied and occupied[-1].upper < 1.0:
+        limitations.append(
+            f"No test example received a transformer confidence above "
+            f"{occupied[-1].upper:.4f}. The persisted threshold must be read relative "
+            "to that range rather than as an absolute probability."
+        )
 
 
 def _model_block(
@@ -250,6 +424,9 @@ def _model_block(
     bundle: ArtifactBundle,
     metrics: ClassificationMetrics,
     selective: SelectiveOutcome,
+    calibration: CalibrationMetrics,
+    curve: tuple[CoveragePoint, ...],
+    latency: LatencyMeasurement,
 ) -> dict[str, object]:
     return {
         "artifact_name": bundle.artifact_name,
@@ -258,6 +435,9 @@ def _model_block(
         "evaluated_from": "reloaded_artifact",
         "metrics": metrics_payload(metrics),
         "selective_prediction": selective.payload(),
+        "calibration": calibration_payload(calibration),
+        "risk_coverage_curve": _risk_coverage_payload(curve),
+        "latency": latency.payload(),
     }
 
 
@@ -294,29 +474,70 @@ def main() -> None:
         transformer, config, test_texts, label_names
     )
 
-    results: dict[str, tuple[ClassificationMetrics, SelectiveOutcome]] = {}
+    results: dict[
+        str,
+        tuple[
+            ClassificationMetrics,
+            SelectiveOutcome,
+            CalibrationMetrics,
+            tuple[CoveragePoint, ...],
+        ],
+    ] = {}
     for name, probabilities in (
         ("baseline", baseline_probability_matrix),
         ("transformer", transformer_probability_matrix),
     ):
         predicted = labels_from_probabilities(probabilities)
+        confidences = confidences_from_probabilities(probabilities)
+        correct = [
+            predicted_label == true_label
+            for predicted_label, true_label in zip(predicted, test_labels, strict=True)
+        ]
         # Every aggregate comes from the shared metric function. A second F1
         # implementation here would bypass the imbalanced regression fixture, which
         # is the only guard that can catch a macro/weighted swap on this balanced
         # split.
         metrics = compute_classification_metrics(test_labels, predicted, label_names)
         selective = apply_threshold(
-            confidences=confidences_from_probabilities(probabilities),
-            correct=[
-                predicted_label == true_label
-                for predicted_label, true_label in zip(predicted, test_labels, strict=True)
-            ],
+            confidences=confidences,
+            correct=correct,
             threshold=threshold,
         )
-        results[name] = (metrics, selective)
+        # Calibration and the risk/coverage curve reuse the confidences already
+        # derived above, so the test split is still read exactly once per run.
+        calibration = compute_calibration_metrics(confidences, correct)
+        curve = coverage_curve(confidences, correct)
+        results[name] = (metrics, selective, calibration, curve)
 
-    baseline_metrics, baseline_selective = results["baseline"]
-    transformer_metrics, transformer_selective = results["transformer"]
+    (
+        baseline_metrics,
+        baseline_selective,
+        baseline_calibration,
+        baseline_curve,
+    ) = results["baseline"]
+    (
+        transformer_metrics,
+        transformer_selective,
+        transformer_calibration,
+        transformer_curve,
+    ) = results["transformer"]
+
+    latency_samples = select_latency_samples(
+        test_texts,
+        _token_lengths(transformer, test_texts, config),
+    )
+    baseline_latency = measure_latency(
+        _baseline_single_request(baseline, label_count),
+        latency_samples,
+        model_name="baseline",
+        max_sequence_length=config.training.max_sequence_length,
+    )
+    transformer_latency = measure_latency(
+        _transformer_single_request(transformer, config, label_names),
+        latency_samples,
+        model_name="transformer",
+        max_sequence_length=config.training.max_sequence_length,
+    )
 
     verdict = compare_metric(
         baseline_value=baseline_metrics.macro_f1,
@@ -348,15 +569,40 @@ def main() -> None:
         },
         "models": {
             "baseline": _model_block(
-                bundle=baseline, metrics=baseline_metrics, selective=baseline_selective
+                bundle=baseline,
+                metrics=baseline_metrics,
+                selective=baseline_selective,
+                calibration=baseline_calibration,
+                curve=baseline_curve,
+                latency=baseline_latency,
             ),
             "transformer": _model_block(
                 bundle=transformer,
                 metrics=transformer_metrics,
                 selective=transformer_selective,
+                calibration=transformer_calibration,
+                curve=transformer_curve,
+                latency=transformer_latency,
             ),
         },
         "comparison": verdict.payload(),
+        "latency_protocol": {
+            "samples": latency_samples.payload(),
+            "sampled_from": "test",
+            "environment": latency_environment(
+                device=str(resolve_device()),
+                thread_count=torch.get_num_threads(),
+                cuda_available=torch.cuda.is_available(),
+            ),
+            "caveat": LATENCY_CAVEAT,
+            "is_service_level_claim": False,
+            "reproducible": False,
+            "reproducibility_note": (
+                "Latency is the one section of this report that does not reproduce "
+                "between runs of the same configuration. The run ID covers the "
+                "sampling protocol, never the measured durations."
+            ),
+        },
         "environment": {
             "python_version": platform.python_version(),
             "platform": platform.platform(),
@@ -364,13 +610,27 @@ def main() -> None:
             "device": str(resolve_device()),
         },
         "limitations": [
-            "Calibration error, risk/coverage curves, latency, and the curated "
-            "unsupported-request fixture are not part of this report yet; they are "
-            "tracked by S05.2 and S05.3.",
+            "The curated unsupported-request fixture is not part of this report "
+            "yet; it is tracked by S05.3.",
+            LATENCY_CAVEAT,
             "No GPU throughput claim is evidenced. Evaluation ran on the device "
             "recorded in the environment block.",
+            "Expected calibration error depends on the recorded binning. It is "
+            "comparable between these two models because both were scored against "
+            "the same fixed equal-width bins, and is not comparable with an ECE "
+            "computed under a different binning.",
+            "No recalibration was applied. A confidence score from either model is a "
+            "ranking signal for abstention, not a probability of correctness; read "
+            "the calibration block before treating one as the latter.",
         ],
     }
+    # Derived from the measured values rather than written as prose, so a future run
+    # whose calibration differs cannot inherit a stale claim about it.
+    _append_calibration_limitations(
+        report,
+        baseline=baseline_calibration,
+        transformer=transformer_calibration,
+    )
 
     report_directory = config.report_root / "evaluate" / run_id
     _write_json_atomically(report_directory / COMPARISON_JSON_FILENAME, report)
@@ -386,6 +646,11 @@ def main() -> None:
             verdict=verdict,
             baseline_run_id=baseline.run_id,
             transformer_run_id=transformer.run_id,
+            baseline_calibration=calibration_payload(baseline_calibration),
+            transformer_calibration=calibration_payload(transformer_calibration),
+            baseline_latency=baseline_latency.payload(),
+            transformer_latency=transformer_latency.payload(),
+            latency_caveat=LATENCY_CAVEAT,
         ),
     )
 
@@ -417,6 +682,7 @@ if __name__ == "__main__":
         BaselineError,
         DataContractError,
         EvaluationError,
+        LatencyError,
         TrainingError,
         ValueError,
     ) as error:

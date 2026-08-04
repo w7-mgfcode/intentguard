@@ -2,9 +2,11 @@
 
 Confidence-aware support intent classification with reproducible evaluation, selective prediction, and a typed FastAPI inference boundary.
 
-> The foundation, BANKING77 data contract, TF-IDF baseline, and DistilBERT training path are implemented. Comparative test evaluation runs and is measured, but remains partial: calibration, latency, and the curated unsupported-request fixture are outstanding. The API and the real-artifact demo remain planned, and their Make targets deliberately fail until their MUST umbrellas are delivered.
+> The foundation, BANKING77 data contract, TF-IDF baseline, and DistilBERT training path are implemented. Comparative test evaluation runs and is measured, now including calibration, risk/coverage curves, and single-request latency, but remains partial: the curated unsupported-request fixture is outstanding. The API and the real-artifact demo remain planned, and their Make targets deliberately fail until their MUST umbrellas are delivered.
 >
 > **Measured result:** on the held-out test split the TF-IDF baseline reaches macro-F1 0.8654 and the fine-tuned DistilBERT reaches 0.6620. The baseline wins by 0.2034. Reporting that honestly is what AC-004 asks for; nothing was retuned after the number was seen.
+>
+> **Measured caveat:** neither model is well calibrated. Both are underconfident — baseline ECE 0.4883, transformer ECE 0.4697 — so a confidence score is a ranking signal for abstention, not a probability of correctness. Single-request latency on one measured CPU is 0.53 ms p50 for the baseline and 10.68 ms p50 for the transformer; that is descriptive for that machine, not a service level.
 
 ## What this repository is for
 

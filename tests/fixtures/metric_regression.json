@@ -35,5 +35,61 @@
         "support": 1
       }
     ]
+  },
+  "calibration": {
+    "description": "Hand-checked ECE over 5 equal-width bins, small enough to verify on paper while exercising every D15 clause. Bin [0.2,0.4) is empty and must contribute nothing; bin [0.4,0.6) is perfectly calibrated so its gap is exactly 0; the final bin is closed so confidence 1.0 is binned rather than dropped. Averaging over all 5 bins instead of the 4 non-empty ones yields 1/60 rather than 1/12, so that dilution cannot pass unnoticed.",
+    "bin_count": 5,
+    "confidences": [0.1, 0.5, 0.5, 0.7, 0.9, 1.0],
+    "correct": [false, false, true, true, true, true],
+    "expected": {
+      "example_count": 6,
+      "non_empty_bin_count": 4,
+      "expected_calibration_error": [1, 12],
+      "mean_confidence": [37, 60],
+      "accuracy": [2, 3],
+      "diluted_by_all_bins_would_be": [1, 60],
+      "bins": [
+        {
+          "lower": [0, 1],
+          "upper": [1, 5],
+          "count": 1,
+          "mean_confidence": [1, 10],
+          "accuracy": [0, 1],
+          "gap": [1, 10]
+        },
+        {
+          "lower": [1, 5],
+          "upper": [2, 5],
+          "count": 0,
+          "mean_confidence": [0, 1],
+          "accuracy": [0, 1],
+          "gap": [0, 1]
+        },
+        {
+          "lower": [2, 5],
+          "upper": [3, 5],
+          "count": 2,
+          "mean_confidence": [1, 2],
+          "accuracy": [1, 2],
+          "gap": [0, 1]
+        },
+        {
+          "lower": [3, 5],
+          "upper": [4, 5],
+          "count": 1,
+          "mean_confidence": [7, 10],
+          "accuracy": [1, 1],
+          "gap": [3, 10]
+        },
+        {
+          "lower": [4, 5],
+          "upper": [1, 1],
+          "count": 2,
+          "mean_confidence": [19, 20],
+          "accuracy": [1, 1],
+          "gap": [1, 20]
+        }
+      ]
+    }
   }
 }
