@@ -6,7 +6,7 @@ Confidence-aware support intent classification with reproducible evaluation, sel
 >
 > **Measured result:** on the held-out test split the TF-IDF baseline reaches macro-F1 0.8654 and the fine-tuned DistilBERT reaches 0.6620. The baseline wins by 0.2034. Reporting that honestly is what AC-004 asks for; nothing was retuned after the number was seen.
 >
-> **Measured caveat:** neither model is well calibrated. Both are underconfident — baseline ECE 0.4883, transformer ECE 0.4697 — so a confidence score is a ranking signal for abstention, not a probability of correctness. Single-request latency on one measured CPU is 0.53 ms p50 for the baseline and 10.68 ms p50 for the transformer; that is descriptive for that machine, not a service level.
+> **Measured caveat:** neither model is well calibrated. Both are underconfident — baseline ECE 0.4883, transformer ECE 0.4697 — so a confidence score is a ranking signal for abstention, not a probability of correctness. Single-request latency on one measured CPU is 0.53 ms p50 for the baseline and 8.81 ms p50 for the transformer; that is descriptive for that machine and that run, not a service level, and it is the one reported figure that moves between runs of the same configuration.
 
 ## What this repository is for
 
