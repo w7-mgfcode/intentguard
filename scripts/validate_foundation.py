@@ -157,7 +157,15 @@ def validate_toml_and_project() -> None:
     assert data["dataset_id"] == "PolyAI/banking77"
     assert data["dataset_revision"] == "1fb62b1bb4635df59a8e1b2f2bc5e0643b2856c8"
     assert data["validation_fraction"] == 0.15
-    assert cast(dict[str, object], config["model"])["base_model_revision"] == "UNRESOLVED"
+    # E04 resolved the base-model pin. The revision must be an immutable 40-hex
+    # commit rather than a mutable ref such as `main`, which would silently change
+    # the trained weights between runs while leaving provenance unchanged.
+    model = cast(dict[str, object], config["model"])
+    assert model["base_model_id"] == "distilbert/distilbert-base-uncased"
+    revision = model["base_model_revision"]
+    assert isinstance(revision, str)
+    assert len(revision) == 40
+    assert set(revision) <= set("0123456789abcdef"), revision
     print("PASSED: TOML parsing and pyproject/configuration contract")
 
 
@@ -167,8 +175,13 @@ def validate_make_contract() -> None:
     assert targets == EXPECTED_TARGETS, f"Unexpected Make targets: {sorted(targets)}"
     assert "uv run --locked python scripts/prepare_data.py" in makefile
     assert "uv run --locked python scripts/train_baseline.py" in makefile
-    for umbrella in ("U04", "U05", "U06"):
+    assert "uv run --locked python scripts/train_transformer.py" in makefile
+    # U04 is wired now, so its placeholder must be gone rather than left beside a
+    # working recipe. U05 and U06 remain unimplemented and must keep failing
+    # explicitly instead of exiting zero.
+    for umbrella in ("U05", "U06"):
         assert f"Not implemented — tracked by {umbrella}" in makefile
+    assert "Not implemented — tracked by U04" not in makefile
     print("PASSED: developer command presence and explicit future-command failures")
 
 
@@ -482,7 +495,10 @@ def validate_placeholders_and_secrets() -> None:
     assert not placeholders, f"Unresolved generic placeholders: {placeholders}"
 
     config_text = (REPOSITORY_ROOT / "configs" / "default.toml").read_text(encoding="utf-8")
-    assert config_text.count('= "UNRESOLVED"') == 1
+    # E02 left exactly one `UNRESOLVED` gate, the base-model revision. E04 pinned
+    # it, so no unresolved value may remain: a reintroduced placeholder would mean
+    # some model-affecting input is no longer frozen before training.
+    assert config_text.count('= "UNRESOLVED"') == 0
 
     secret_hits: list[str] = []
     for path in REPOSITORY_ROOT.rglob("*"):
@@ -496,7 +512,7 @@ def validate_placeholders_and_secrets() -> None:
         if any(pattern.search(text) for pattern in SECRET_PATTERNS):
             secret_hits.append(str(path.relative_to(REPOSITORY_ROOT)))
     assert not secret_hits, f"Potential secrets detected: {secret_hits}"
-    print("PASSED: placeholder scan (one approved model revision gate) and secret-pattern scan")
+    print("PASSED: placeholder scan (no unresolved gates remain) and secret-pattern scan")
 
 
 def _run_git(repository_root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:

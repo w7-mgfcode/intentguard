@@ -15,8 +15,7 @@ baseline: ## Train, persist, reload, and measure the lexical baseline (U03)
 	uv run --locked python scripts/train_baseline.py
 
 train: ## Fine-tune DistilBERT and persist the selected threshold (U04)
-	@printf '%s\n' 'Not implemented — tracked by U04' >&2
-	@false
+	uv run --locked python scripts/train_transformer.py
 
 evaluate: ## Evaluate the immutable artifact on test data (U05)
 	@printf '%s\n' 'Not implemented — tracked by U05' >&2

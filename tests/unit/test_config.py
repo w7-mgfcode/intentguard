@@ -7,8 +7,9 @@ import pytest
 from intentguard.config import (
     BANKING77_DATASET_ID,
     BANKING77_DATASET_REVISION,
+    DISTILBERT_BASE_MODEL_ID,
+    DISTILBERT_BASE_MODEL_REVISION,
     STATUS_VOCABULARY,
-    UNRESOLVED_REVISION,
     load_foundation_config,
 )
 
@@ -26,9 +27,40 @@ def test_default_configuration_loads_foundation_contract() -> None:
     assert config.data_root == Path("data")
     assert config.artifact_root == Path("artifacts")
     assert config.report_root == Path("reports")
-    assert config.base_model_id == "distilbert/distilbert-base-uncased"
-    assert config.base_model_revision == UNRESOLVED_REVISION
+    assert config.base_model_id == DISTILBERT_BASE_MODEL_ID
+    assert config.base_model_revision == DISTILBERT_BASE_MODEL_REVISION
     assert config.status_vocabulary == STATUS_VOCABULARY
+
+
+def test_base_model_revision_is_an_immutable_commit_pin() -> None:
+    revision = load_foundation_config(DEFAULT_CONFIG).base_model_revision
+
+    # A mutable ref such as `main` would silently change the trained weights
+    # between runs while leaving the recorded provenance unchanged.
+    assert len(revision) == 40
+    assert set(revision) <= set("0123456789abcdef")
+
+
+def test_default_configuration_resolves_every_training_hyperparameter() -> None:
+    training = load_foundation_config(DEFAULT_CONFIG).training
+
+    assert training.max_sequence_length == 96
+    assert training.epochs == 2
+    assert training.train_batch_size == 16
+    assert training.eval_batch_size == 32
+    assert training.learning_rate == 2e-5
+    assert training.weight_decay == 0.01
+    assert training.warmup_ratio == 0.1
+    assert training.max_grad_norm == 1.0
+    assert training.selection_metric == "validation_macro_f1"
+    assert training.threshold_source == "validation"
+
+
+def test_default_configuration_resolves_the_threshold_policy() -> None:
+    threshold = load_foundation_config(DEFAULT_CONFIG).threshold
+
+    assert threshold.minimum_coverage == 0.70
+    assert threshold.objective == "selective_risk"
 
 
 def test_default_configuration_resolves_every_baseline_hyperparameter() -> None:
@@ -153,4 +185,140 @@ def test_missing_generated_output_root_is_rejected(tmp_path: Path, key: str) -> 
     del document["paths"][key]
 
     with pytest.raises(ValueError, match=key):
+        load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "max_sequence_length",
+        "epochs",
+        "train_batch_size",
+        "eval_batch_size",
+        "learning_rate",
+        "weight_decay",
+        "warmup_ratio",
+        "max_grad_norm",
+        "selection_metric",
+        "threshold_source",
+    ],
+)
+def test_missing_training_hyperparameter_is_rejected(tmp_path: Path, key: str) -> None:
+    document = _default_document()
+    del document["training"][key]
+
+    with pytest.raises(ValueError, match=key):
+        load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("max_sequence_length", 0),
+        ("epochs", 0),
+        ("epochs", 1.5),
+        ("train_batch_size", 0),
+        ("eval_batch_size", -1),
+        ("learning_rate", 0.0),
+        ("learning_rate", float("nan")),
+        ("learning_rate", float("inf")),
+        ("weight_decay", -0.01),
+        ("weight_decay", float("nan")),
+        # A warmup ratio of 1.0 would leave no decay steps at all.
+        ("warmup_ratio", 1.0),
+        ("warmup_ratio", -0.1),
+        ("warmup_ratio", float("inf")),
+        ("max_grad_norm", 0.0),
+        ("max_grad_norm", float("nan")),
+        # Only a validation-derived metric may select the checkpoint.
+        ("selection_metric", "test_macro_f1"),
+        # Only validation may source the threshold; test selection is leakage.
+        ("threshold_source", "test"),
+    ],
+)
+def test_invalid_training_hyperparameter_is_rejected(
+    tmp_path: Path, key: str, value: object
+) -> None:
+    document = _default_document()
+    document["training"][key] = value
+
+    with pytest.raises(ValueError):
+        load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+
+def test_zero_warmup_ratio_is_accepted(tmp_path: Path) -> None:
+    document = _default_document()
+    document["training"]["warmup_ratio"] = 0.0
+
+    config = load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+    assert config.training.warmup_ratio == 0.0
+
+
+def test_zero_weight_decay_is_accepted(tmp_path: Path) -> None:
+    document = _default_document()
+    document["training"]["weight_decay"] = 0.0
+
+    config = load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+    assert config.training.weight_decay == 0.0
+
+
+@pytest.mark.parametrize("key", ["minimum_coverage", "objective"])
+def test_missing_threshold_setting_is_rejected(tmp_path: Path, key: str) -> None:
+    document = _default_document()
+    del document["threshold"][key]
+
+    with pytest.raises(ValueError, match=key):
+        load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("minimum_coverage", 0.0),
+        ("minimum_coverage", 1.0),
+        ("minimum_coverage", -0.1),
+        ("minimum_coverage", float("nan")),
+        ("objective", "accuracy"),
+    ],
+)
+def test_invalid_threshold_setting_is_rejected(tmp_path: Path, key: str, value: object) -> None:
+    document = _default_document()
+    document["threshold"][key] = value
+
+    with pytest.raises(ValueError):
+        load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+
+@pytest.mark.parametrize("table", ["training", "threshold"])
+def test_missing_model_table_is_rejected(tmp_path: Path, table: str) -> None:
+    document = _default_document()
+    del document[table]
+
+    with pytest.raises(ValueError, match=table):
+        load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+
+def test_unpinned_base_model_revision_is_rejected(tmp_path: Path) -> None:
+    document = _default_document()
+    document["model"]["base_model_revision"] = "UNRESOLVED"
+
+    with pytest.raises(ValueError, match="revision"):
+        load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+
+def test_mutable_base_model_ref_is_rejected(tmp_path: Path) -> None:
+    document = _default_document()
+    document["model"]["base_model_revision"] = "main"
+
+    with pytest.raises(ValueError, match="revision"):
+        load_foundation_config(_write_config(tmp_path / "config.toml", document))
+
+
+def test_unapproved_base_model_identifier_is_rejected(tmp_path: Path) -> None:
+    document = _default_document()
+    document["model"]["base_model_id"] = "bert-base-uncased"
+
+    with pytest.raises(ValueError, match="identifier"):
         load_foundation_config(_write_config(tmp_path / "config.toml", document))
