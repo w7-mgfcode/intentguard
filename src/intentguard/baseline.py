@@ -12,7 +12,7 @@ would silently break every previously saved artifact.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Final, cast
 
 import numpy as np
@@ -22,6 +22,7 @@ from sklearn.linear_model import LogisticRegression  # type: ignore[import-untyp
 from sklearn.pipeline import Pipeline  # type: ignore[import-untyped]
 
 from intentguard.config import BaselineConfig
+from intentguard.metrics import MetricError, label_id_array
 
 VECTORIZER_STEP: Final = "tfidf"
 CLASSIFIER_STEP: Final = "classifier"
@@ -35,8 +36,12 @@ class BaselineError(ValueError):
 def build_pipeline(config: BaselineConfig, seed: int) -> Pipeline:
     """Build an unfitted TF-IDF logistic-regression pipeline from frozen configuration.
 
-    Every hyperparameter is passed explicitly from `config`; none is left to a
-    library default, so a scikit-learn upgrade cannot silently change the model.
+    The ten hyperparameters selected for this baseline are passed explicitly from
+    `config`, so none of them can drift with a repository edit. Estimator options
+    that were not selected keep their scikit-learn defaults and are therefore not
+    pinned against a library upgrade; the recorded dependency versions in each
+    artifact's provenance are what make a measured result reproducible.
+
     `multi_class` is intentionally not set: it was removed in scikit-learn 1.9,
     and `lbfgs` is multinomial by default.
     """
@@ -89,13 +94,18 @@ def fit_pipeline(
     if label_count < 2:
         raise BaselineError("Baseline training requires at least two labels")
 
-    observed = sorted(set(int(label) for label in label_ids))
+    try:
+        labels = label_id_array(label_ids, "label_ids", label_count)
+    except MetricError as error:
+        raise BaselineError(f"Baseline training labels are invalid: {error}") from error
+
+    observed = sorted(set(labels.tolist()))
     if observed != list(range(label_count)):
         raise BaselineError(
-            f"Baseline training data must cover all {label_count} labels exactly once each"
+            f"Baseline training data must cover all {label_count} labels at least once"
         )
 
-    pipeline.fit(list(texts), np.asarray(label_ids, dtype=np.int64))
+    pipeline.fit(list(texts), labels)
 
     classes = cast(NDArray[np.int64], pipeline.named_steps[CLASSIFIER_STEP].classes_)
     if classes.tolist() != list(range(label_count)):
@@ -109,6 +119,20 @@ def vocabulary(pipeline: Pipeline) -> frozenset[str]:
     """Return the fitted TF-IDF vocabulary, used to assert train-only fitting."""
 
     return frozenset(pipeline.named_steps[VECTORIZER_STEP].vocabulary_)
+
+
+def analyzer(pipeline: Pipeline) -> Callable[[str], list[str]]:
+    """Return the vectorizer's own analyzer, so callers tokenise as it does.
+
+    Any diagnostic that compares text against `vocabulary()` must use this rather
+    than an ad-hoc split. The vectorizer applies its own preprocessing, token
+    pattern, and n-gram range, so a naive `str.split()` reports terms the model
+    never had the chance to learn.
+    """
+
+    return cast(
+        Callable[[str], list[str]], pipeline.named_steps[VECTORIZER_STEP].build_analyzer()
+    )
 
 
 def predict_probabilities(

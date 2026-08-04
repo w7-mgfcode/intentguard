@@ -103,6 +103,10 @@ def test_missing_baseline_hyperparameter_is_rejected(tmp_path: Path, key: str) -
         ("sublinear_tf", 1),
         ("solver", "newton-cholesky"),
         ("regularization_c", 0.0),
+        # `nan <= 0.0` is false and `inf` is positive, so a sign check alone
+        # lets both reach the estimator. Finiteness is required explicitly.
+        ("regularization_c", float("nan")),
+        ("regularization_c", float("inf")),
         ("max_iter", 0),
         ("class_weight", "auto"),
     ],

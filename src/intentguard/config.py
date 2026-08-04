@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,7 +93,14 @@ def _positive_integer(table: dict[str, object], name: str) -> int:
 
 def _positive_float(table: dict[str, object], name: str) -> float:
     value = table.get(name)
-    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0.0:
+    # `nan <= 0.0` is false and `inf` is positive, so both pass a naive sign check
+    # and would reach the estimator. Require a finite value explicitly.
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or value <= 0.0
+    ):
         raise ValueError(f"Missing or invalid positive number: {name}")
     return float(value)
 

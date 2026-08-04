@@ -44,6 +44,7 @@ from intentguard.artifacts import (
 )
 from intentguard.baseline import (
     BaselineError,
+    analyzer,
     build_pipeline,
     fit_pipeline,
     labels_from_probabilities,
@@ -69,7 +70,7 @@ TRACKED_DEPENDENCIES: Final = ("joblib", "numpy", "scikit-learn")
 
 
 def _baseline_config_payload(config: BaselineConfig) -> dict[str, object]:
-    """Render the frozen hyperparameters, which also define the run identity."""
+    """Render the frozen hyperparameters recorded in the artifact's config.json."""
 
     return {
         "class_weight": config.class_weight,
@@ -82,6 +83,30 @@ def _baseline_config_payload(config: BaselineConfig) -> dict[str, object]:
         "regularization_c": config.regularization_c,
         "solver": config.solver,
         "sublinear_tf": config.sublinear_tf,
+    }
+
+
+def _run_identity_payload(
+    config: FoundationConfig, prepared: PreparedDataset
+) -> dict[str, object]:
+    """Render every input that changes the fitted model, so the run ID tracks it.
+
+    The hyperparameters alone are not sufficient. `seed` reaches the classifier's
+    `random_state` and, with `validation_fraction`, determines the stratified
+    train/validation split. If either changed without changing the run ID, an
+    existing bundle would be reused and the report would attach this run's
+    provenance to a model that a different configuration produced.
+
+    The split fingerprints are included because they are the strongest available
+    identity for the data actually trained on, and they already cover the seed and
+    fraction as applied rather than as configured.
+    """
+
+    return {
+        "baseline": _baseline_config_payload(config.baseline),
+        "seed": config.seed,
+        "split_fingerprints": prepared.provenance["split_fingerprints"],
+        "validation_fraction": config.validation_fraction,
     }
 
 
@@ -141,6 +166,7 @@ def _save_baseline_artifact(
         "seed": config.seed,
         "split_fingerprints": prepared.provenance["split_fingerprints"],
         "trained_on_split": "train",
+        "validation_fraction": config.validation_fraction,
         "validation_selection_split": "validation",
     }
 
@@ -198,7 +224,7 @@ def main() -> None:
     validation_texts, validation_labels = _texts_and_labels(prepared.validation)
 
     run_id = compute_run_id(
-        ARTIFACT_NAME, config.dataset_revision, _baseline_config_payload(config.baseline)
+        ARTIFACT_NAME, config.dataset_revision, _run_identity_payload(config, prepared)
     )
     destination = artifact_directory(config.artifact_root, ARTIFACT_NAME, run_id)
     if destination.exists():
@@ -217,11 +243,15 @@ def main() -> None:
             label_count=label_count,
         )
 
+        # Tokenise with the vectorizer's own analyzer. A plain split would report
+        # terms the model was never offered, which makes the diagnostic misleading.
+        held_out_analyzer = analyzer(pipeline)
+        fitted_vocabulary = vocabulary(pipeline)
         held_out_tokens = {
             token
             for text in validation_texts
-            for token in text.lower().split()
-            if token not in vocabulary(pipeline)
+            for token in held_out_analyzer(text)
+            if token not in fitted_vocabulary
         }
         validation_probabilities = predict_probabilities(
             pipeline, validation_texts, label_count=label_count

@@ -338,6 +338,30 @@ def test_load_rejects_an_unknown_schema_version(tmp_path: Path) -> None:
         load_artifact(directory)
 
 
+@pytest.mark.parametrize(
+    ("entries", "expected"),
+    [
+        pytest.param([123], "is not a name", id="non_string"),
+        pytest.param([""], "is not a name", id="empty_string"),
+        pytest.param([None], "is not a name", id="null"),
+        pytest.param(["absent.bin"], "not manifested", id="unmanifested_name"),
+    ],
+)
+def test_load_rejects_a_malformed_payload_file_entry(
+    tmp_path: Path, entries: list[object], expected: str
+) -> None:
+    """A malformed entry must fail as an ArtifactError, not as a later TypeError."""
+
+    _save(tmp_path)
+    directory = _bundle_directory(tmp_path)
+    manifest = json.loads((directory / MANIFEST_FILENAME).read_text(encoding="utf-8"))
+    manifest["payload_files"] = entries
+    (directory / MANIFEST_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ArtifactError, match=expected):
+        load_artifact(directory)
+
+
 def test_bundle_path_returns_verified_files(tmp_path: Path) -> None:
     bundle = _save(tmp_path)
     assert bundle.path(PAYLOAD_FILENAME).is_file()

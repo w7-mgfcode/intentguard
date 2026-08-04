@@ -20,6 +20,7 @@ from intentguard.baseline import (
     CLASSIFIER_STEP,
     VECTORIZER_STEP,
     BaselineError,
+    analyzer,
     build_pipeline,
     fit_pipeline,
     labels_from_probabilities,
@@ -165,6 +166,65 @@ def test_fit_rejects_a_degenerate_label_map() -> None:
 def test_fit_rejects_training_data_missing_a_label() -> None:
     with pytest.raises(BaselineError, match="must cover all 4 labels"):
         fit_pipeline(build_pipeline(_config(), SEED), TRAIN_TEXTS, TRAIN_LABELS, label_count=4)
+
+
+def test_fit_accepts_repeated_labels() -> None:
+    """Coverage is the real invariant; every label repeats in the canonical splits."""
+
+    fit_pipeline(build_pipeline(_config(), SEED), TRAIN_TEXTS, TRAIN_LABELS, label_count=3)
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        pytest.param((0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0), id="whole_floats"),
+        pytest.param((0.9, 0.9, 0.9, 1.9, 1.9, 1.9, 2.9, 2.9, 2.9), id="fractional_floats"),
+    ],
+)
+def test_fit_rejects_float_labels(labels: tuple[float, ...]) -> None:
+    """Floats must not be truncated into labels; 0.9 is not label 0."""
+
+    with pytest.raises(BaselineError, match="not an integer label ID"):
+        fit_pipeline(
+            build_pipeline(_config(), SEED),
+            TRAIN_TEXTS,
+            labels,  # type: ignore[arg-type]
+            label_count=LABEL_COUNT,
+        )
+
+
+def test_fit_rejects_boolean_labels() -> None:
+    """`bool` is a subclass of `int`, so it needs an explicit rejection."""
+
+    # mypy accepts this without complaint precisely because `bool` is an `int`,
+    # which is why the rejection has to happen at runtime.
+    labels = (False, False, False, True, True, True, 2, 2, 2)
+    with pytest.raises(BaselineError, match="not an integer label ID"):
+        fit_pipeline(
+            build_pipeline(_config(), SEED), TRAIN_TEXTS, labels, label_count=LABEL_COUNT
+        )
+
+
+def test_fit_rejects_labels_outside_the_label_map() -> None:
+    labels = (0, 0, 0, 1, 1, 1, 2, 2, 99)
+    with pytest.raises(BaselineError, match="outside the label map"):
+        fit_pipeline(
+            build_pipeline(_config(), SEED), TRAIN_TEXTS, labels, label_count=LABEL_COUNT
+        )
+
+
+def test_analyzer_matches_the_fitted_vocabulary() -> None:
+    """Every analyzer term drawn from training text must be in the vocabulary.
+
+    A naive `str.split()` does not hold this property, which is what made the
+    held-out-token diagnostic misleading.
+    """
+
+    pipeline = _fitted()
+    terms = {term for text in TRAIN_TEXTS for term in analyzer(pipeline)(text)}
+
+    assert terms
+    assert terms <= vocabulary(pipeline)
 
 
 def test_predict_rejects_empty_input() -> None:

@@ -41,7 +41,16 @@ class ClassificationMetrics:
     per_class: tuple[ClassMetrics, ...]
 
 
-def _label_array(values: Sequence[int], name: str, label_count: int) -> NDArray[np.int64]:
+def label_id_array(values: Sequence[int], name: str, label_count: int) -> NDArray[np.int64]:
+    """Validate label IDs against the label map and return them as int64.
+
+    This is the single definition of the label-ID contract. Training and metrics
+    both use it, so a value that would be rejected in a report can never be
+    silently accepted into a fitted model. Booleans are rejected explicitly
+    because `bool` is a subclass of `int`, and floats are rejected rather than
+    truncated, so `0.9` cannot become label `0`.
+    """
+
     for index, value in enumerate(values):
         if not isinstance(value, (int, np.integer)) or isinstance(value, bool):
             raise MetricError(f"{name}[{index}] is not an integer label ID")
@@ -76,8 +85,8 @@ def compute_classification_metrics(
         raise MetricError("Metrics require at least one example")
 
     label_count = len(label_names)
-    truth = _label_array(y_true, "y_true", label_count)
-    predicted = _label_array(y_pred, "y_pred", label_count)
+    truth = label_id_array(y_true, "y_true", label_count)
+    predicted = label_id_array(y_pred, "y_pred", label_count)
 
     precision, recall, f1, support = precision_recall_fscore_support(
         truth,

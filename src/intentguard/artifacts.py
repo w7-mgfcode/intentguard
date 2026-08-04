@@ -309,6 +309,17 @@ def load_artifact(directory: Path) -> ArtifactBundle:
         raise ArtifactError(f"Artifact manifest lists no files: {directory}")
     if not isinstance(payload_files, list) or not payload_files:
         raise ArtifactError(f"Artifact manifest lists no payload files: {directory}")
+    for entry in payload_files:
+        # A malformed entry must fail here as an ArtifactError rather than escaping
+        # later as an unrelated TypeError from path joining.
+        if not isinstance(entry, str) or not entry:
+            raise ArtifactError(
+                f"Artifact manifest payload file entry is not a name: {entry!r}"
+            )
+        if entry not in files:
+            raise ArtifactError(
+                f"Artifact manifest payload file is not manifested: {entry!r}"
+            )
 
     present = set(_relative_files(directory)) - {MANIFEST_FILENAME}
     listed = set(files)
