@@ -73,9 +73,19 @@ make demo
 `make serve` and `make demo` currently exit non-zero and name their owning umbrella
 (U06). They must not be used as evidence of API completion.
 
-`make evaluate` succeeds, but U05 is **Partial**: calibration error, the risk/coverage
-curve, latency, and the curated unsupported-request fixture are not part of the report
-yet. A successful `make evaluate` is therefore not evidence that U05 is complete.
+`make evaluate` succeeds and U05 is **Implemented**: the test-split comparison,
+calibration, risk/coverage curves, latency, and the curated unsupported-request check
+are all written. It fails loudly rather than degrading if the curated fixture is
+missing, malformed, or collides with any BANKING77 split — a fixture row that exists
+in training data would make its abstention a measure of memorisation, so that is an
+authoring error to fix and not something the run works around.
+
+`make evaluate` now also measures single-request latency, which accounts for most of
+its roughly 30-second runtime and is the only output that differs between two runs of
+the same configuration. Two consecutive runs producing the same `run_id` and the same
+directory but different p50 values is the intended behaviour, not a defect: the run ID
+covers the sampling protocol and never the measured durations. Everything else in
+`comparison.json` is byte-identical across runs.
 
 The threshold lifecycle is fixed: `make train` chooses it from validation predictions and persists it in the immutable transformer artifact; `make evaluate` loads that value and applies it to test predictions without tuning on test labels. `scripts/evaluate.py` imports neither `select_threshold` nor any fitting function, so re-deriving a threshold from test data is not something that code path can express; a test enforces this by inspecting the script's syntax tree rather than trusting a text search.
 

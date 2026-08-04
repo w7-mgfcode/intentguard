@@ -220,7 +220,7 @@
       "old_umbrella": "U05",
       "old_child": "C05.3",
       "primary": true,
-      "implementation_path": "tests/fixtures/unsupported.json",
+      "implementation_path": "tests/fixtures/unsupported_requests.jsonl",
       "validation_command": "make evaluate",
       "expected_evidence": "Separate unsupported-request abstention report"
     },
@@ -415,9 +415,9 @@
       "old_umbrella": "U05",
       "old_child": "C05.1",
       "primary": true,
-      "implementation_path": "reports/evaluation.json",
+      "implementation_path": "reports/evaluate/<run_id>/comparison.json",
       "validation_command": "make evaluate",
-      "expected_evidence": "Transformer exceeds baseline on required metrics"
+      "expected_evidence": "Both approaches compared on the same test IDs, with a negative result reported honestly"
     },
     {
       "identifier": "AC-005",
@@ -519,7 +519,7 @@
       "old_umbrella": "U05",
       "old_child": "C05.3",
       "primary": true,
-      "implementation_path": "tests/fixtures/unsupported.json",
+      "implementation_path": "tests/fixtures/unsupported_requests.jsonl",
       "validation_command": "make evaluate",
       "expected_evidence": "Separate fixture results with no OOD overclaim"
     },

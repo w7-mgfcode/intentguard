@@ -33,7 +33,7 @@ U02 data contract, U03 baseline artifact, and U04 immutable transformer artifact
 
 ## Likely files
 
-`src/intentguard/evaluation.py`, `src/intentguard/metrics.py`, `scripts/evaluate.py`, `tests/unit/test_metrics.py`, `tests/unit/test_eval_regression.py`, `tests/fixtures/unsupported.json`, `reports/`.
+`src/intentguard/evaluation.py`, `src/intentguard/metrics.py`, `scripts/evaluate.py`, `tests/unit/test_metrics.py`, `tests/unit/test_eval_regression.py`, `tests/fixtures/unsupported_requests.jsonl`, `reports/`.
 
 ## Implementation boundary
 

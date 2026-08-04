@@ -21,10 +21,14 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
 from dataclasses import replace
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
+import numpy as np
 import pytest
 
 from intentguard import evaluation as evaluation_module
@@ -42,6 +46,7 @@ from intentguard.evaluation import (
     render_comparison_markdown,
     resolve_shared_identity,
 )
+from intentguard.latency import LATENCY_CAVEAT
 from intentguard.schemas import CanonicalExample, PreparedDataset
 
 DATASET_ID = "PolyAI/banking77"
@@ -532,6 +537,195 @@ def test_markdown_distinguishes_accepted_accuracy_from_overall_accuracy() -> Non
     assert "not comparable" in document
 
 
+_CALIBRATION_BLOCK = {
+    "bin_count": 15,
+    "binning": "equal_width_left_closed",
+    "expected_calibration_error": 0.0731,
+    "mean_confidence": 0.8123,
+    "accuracy": 0.7392,
+    "non_empty_bin_count": 11,
+}
+
+_LATENCY_BLOCK = {
+    "batch_size": 1,
+    "warm_up_requests": 20,
+    "measured_requests": 200,
+    "p50_ms": 12.5,
+    "p95_ms": 19.75,
+    "mean_ms": 13.125,
+}
+
+
+def _rendered_with(**extra: object) -> str:
+    identity = resolve_shared_identity(
+        baseline=_bundle(),
+        transformer=_transformer_bundle(),
+        prepared=_prepared(),
+        recorded_test_example_id_sha256=_recorded_hash(),
+    )
+    selective = apply_threshold(
+        confidences=[0.9, 0.4, 0.8], correct=[True, False, True], threshold=0.5
+    )
+    return render_comparison_markdown(
+        run_id="intentguard-evaluation-1fb62b1bb463-abcdef123456",
+        identity=identity,
+        baseline_metrics={"accuracy": 0.87, "macro_f1": 0.8654, "weighted_f1": 0.8654},
+        transformer_metrics={"accuracy": 0.72, "macro_f1": 0.6541, "weighted_f1": 0.6541},
+        baseline_selective=selective,
+        transformer_selective=selective,
+        verdict=compare_metric(baseline_value=0.8654, transformer_value=0.6541),
+        baseline_run_id="intentguard-baseline-1fb62b1bb463-059ee4b12214",
+        transformer_run_id="intentguard-distilbert-1fb62b1bb463-88e538757339",
+        **extra,  # type: ignore[arg-type]
+    )
+
+
+def test_rendering_latency_without_its_caveat_raises() -> None:
+    """A percentile printed bare reads as an SLA, which `ML_SYSTEM_DESIGN.md` forbids.
+
+    The guard is asserted by observing it fail, because the caveat is the whole
+    reason this report may state a latency number at all. Both the absent and the
+    empty-string cases are covered: a falsy caveat must not slip through as
+    "technically supplied".
+    """
+
+    for caveat in (None, ""):
+        with pytest.raises(EvaluationError, match="caveat"):
+            _rendered_with(
+                baseline_latency=_LATENCY_BLOCK,
+                transformer_latency=_LATENCY_BLOCK,
+                latency_caveat=caveat,
+            )
+
+
+def test_latency_is_rendered_with_its_caveat_and_denies_reproducibility() -> None:
+    document = _rendered_with(
+        baseline_latency=_LATENCY_BLOCK,
+        transformer_latency=_LATENCY_BLOCK,
+        latency_caveat=LATENCY_CAVEAT,
+    )
+
+    assert LATENCY_CAVEAT in document
+    assert "| p50 |" in document
+    assert "| p95 |" in document
+    assert "does not reproduce" in document
+
+
+def test_calibration_section_states_that_empty_bins_are_excluded() -> None:
+    """The dilution decision must be legible in the report, not only in the code."""
+
+    document = _rendered_with(
+        baseline_calibration=_CALIBRATION_BLOCK,
+        transformer_calibration=_CALIBRATION_BLOCK,
+    )
+
+    assert "## Calibration" in document
+    assert "Empty bins are excluded" in document
+    assert "not comparable with either" in document
+    assert "| Expected calibration error |" in document
+
+
+def _calibration_block(
+    *, mean_confidence: float, accuracy: float, occupied_upper: float = 1.0
+) -> dict[str, object]:
+    """A calibration payload shaped like the real one, with a chosen ceiling."""
+
+    edges = [(index / 15, (index + 1) / 15) for index in range(15)]
+    return {
+        "bin_count": 15,
+        "binning": "equal_width_left_closed",
+        "expected_calibration_error": abs(mean_confidence - accuracy),
+        "mean_confidence": mean_confidence,
+        "accuracy": accuracy,
+        "non_empty_bin_count": sum(1 for _, upper in edges if upper <= occupied_upper),
+        "bins": [
+            {
+                "lower": lower,
+                "upper": upper,
+                "count": 10 if upper <= occupied_upper else 0,
+                "mean_confidence": mean_confidence,
+                "accuracy": accuracy,
+                "gap": abs(mean_confidence - accuracy),
+            }
+            for lower, upper in edges
+        ],
+    }
+
+
+def test_underconfidence_is_named_in_words_and_not_left_to_the_reader() -> None:
+    """The two directions have opposite consequences, so the table alone is not enough."""
+
+    block = _calibration_block(mean_confidence=0.2258, accuracy=0.6955)
+    document = _rendered_with(
+        baseline_calibration=block, transformer_calibration=block
+    )
+
+    assert "is underconfident" in document
+    assert "is overconfident" not in document
+    assert "abstention discards answers it would have got correct" in document
+
+
+def test_overconfidence_is_named_when_that_is_what_happened() -> None:
+    """The direction that did not occur in the measured run must still render correctly."""
+
+    block = _calibration_block(mean_confidence=0.9, accuracy=0.6)
+    document = _rendered_with(
+        baseline_calibration=block, transformer_calibration=block
+    )
+
+    assert "is overconfident" in document
+    assert "is underconfident" not in document
+    assert "stronger claim than the model can support" in document
+
+
+def test_aggregate_agreement_is_not_reported_as_perfect_calibration() -> None:
+    """Mean confidence equal to accuracy is an average, not per-bin calibration."""
+
+    block = _calibration_block(mean_confidence=0.75, accuracy=0.75)
+    block["expected_calibration_error"] = 0.31  # per-bin gaps the average conceals
+    document = _rendered_with(
+        baseline_calibration=block, transformer_calibration=block
+    )
+
+    assert "aggregate agreement only, not per-bin calibration" in document
+    assert "is overconfident" not in document
+    assert "is underconfident" not in document
+
+
+def test_a_confidence_ceiling_below_one_is_reported_with_the_threshold_caveat() -> None:
+    """A threshold of 0.17 looks permissive until you know 0.60 is the model's maximum."""
+
+    document = _rendered_with(
+        baseline_calibration=_calibration_block(mean_confidence=0.377, accuracy=0.865),
+        transformer_calibration=_calibration_block(
+            mean_confidence=0.2258, accuracy=0.6955, occupied_upper=0.6
+        ),
+    )
+
+    assert "No test example received a DistilBERT confidence above 0.6000" in document
+    assert "relative to this model's own confidence range" in document
+
+
+def test_no_ceiling_claim_is_made_when_the_top_bin_is_occupied() -> None:
+    """Silence is correct here: a ceiling of 1.0 is not a finding."""
+
+    block = _calibration_block(mean_confidence=0.8, accuracy=0.75)
+    document = _rendered_with(
+        baseline_calibration=block, transformer_calibration=block
+    )
+
+    assert "No test example received" not in document
+
+
+def test_classification_only_rendering_omits_calibration_and_latency() -> None:
+    """The optional blocks must be genuinely optional, not silently defaulted to zero."""
+
+    document = _rendered_with()
+
+    assert "## Calibration" not in document
+    assert "## Single-request latency" not in document
+
+
 def test_evaluation_never_imports_threshold_selection() -> None:
     """Selecting a threshold during evaluation would read test labels (AC-005).
 
@@ -575,6 +769,149 @@ def test_the_evaluate_script_cannot_select_a_threshold_or_fit_a_model() -> None:
 
     # Evaluation reads artifacts; it must never publish one.
     assert "load_artifact" in imported
+
+
+def _evaluate_script() -> Path:
+    return Path(__file__).resolve().parents[2] / "scripts" / "evaluate.py"
+
+
+def _load_evaluate() -> ModuleType:
+    """Import the orchestration script without running it; `main` is guarded."""
+
+    specification = spec_from_file_location("evaluate", _evaluate_script())
+    assert specification is not None and specification.loader is not None
+    module = module_from_spec(specification)
+    sys.modules[specification.name] = module
+    specification.loader.exec_module(module)
+    return module
+
+
+def test_probability_rows_that_do_not_sum_to_one_are_rejected() -> None:
+    """The maximum of a row is only a confidence if the row is a distribution.
+
+    Asserted by observing the guard fail. A softmax-axis mistake produces rows
+    that still look like plausible probabilities per element, so without this the
+    error would surface as a believable abstention rate rather than as a failure.
+    """
+
+    evaluate = _load_evaluate()
+    rows = np.array([[0.5, 0.4, 0.2], [0.3, 0.3, 0.4]], dtype=np.float64)
+
+    with pytest.raises(EvaluationError, match="do not sum to one"):
+        evaluate._assert_probability_rows(rows, "Baseline")
+
+    # The tolerance is absolute and tight: drift larger than it must not pass.
+    evaluate._assert_probability_rows(
+        np.array([[0.25, 0.25, 0.5]], dtype=np.float64), "Baseline"
+    )
+    with pytest.raises(EvaluationError, match="do not sum to one"):
+        evaluate._assert_probability_rows(
+            np.array([[0.25, 0.25, 0.5 + 1e-6]], dtype=np.float64), "Baseline"
+        )
+
+
+def test_a_single_bad_row_among_valid_rows_still_raises() -> None:
+    """A per-row check, not a check on the mean: one broken row is enough."""
+
+    evaluate = _load_evaluate()
+    rows = np.array([[0.5, 0.5], [0.9, 0.9], [0.5, 0.5]], dtype=np.float64)
+
+    with pytest.raises(EvaluationError):
+        evaluate._assert_probability_rows(rows, "Transformer")
+
+
+def test_the_probability_guard_runs_before_anything_is_binned() -> None:
+    """Ordering is the whole point: binning an invalid confidence yields a real number.
+
+    ``compute_calibration_metrics`` accepts any value in [0, 1], so a row that does
+    not sum to one would still produce a plausible ECE. The guard therefore has to
+    fire before the first call that consumes a confidence. ``main`` is straight-line,
+    so source order within it is execution order.
+    """
+
+    tree = ast.parse(_evaluate_script().read_text(encoding="utf-8"))
+    main = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+
+    def _first_line(name: str) -> int:
+        lines = [
+            node.lineno
+            for node in ast.walk(main)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+        ]
+        assert lines, f"{name} is not called by main()"
+        return min(lines)
+
+    prediction_lines = [
+        _first_line("_baseline_predictions"),
+        _first_line("_transformer_predictions"),
+    ]
+    for consumer in ("compute_calibration_metrics", "coverage_curve", "apply_threshold"):
+        assert max(prediction_lines) < _first_line(consumer), (
+            f"{consumer} consumes confidences before both probability matrices "
+            "have been validated"
+        )
+
+    # And the guard genuinely lives inside both prediction helpers.
+    for helper in ("_baseline_predictions", "_transformer_predictions"):
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == helper
+        )
+        guarded = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_assert_probability_rows"
+            for node in ast.walk(function)
+        )
+        assert guarded, f"{helper} must validate its rows before returning them"
+
+
+def test_the_run_identity_records_the_protocol_and_never_a_duration() -> None:
+    """D14: two runs of one configuration must share an ID, so timings stay out.
+
+    Checked against the rendered payload rather than by reading, because a timing
+    key added later would otherwise give the same evaluation two identities and
+    silently defeat the reuse guarantee.
+    """
+
+    evaluate = _load_evaluate()
+    identity = resolve_shared_identity(
+        baseline=_bundle(),
+        transformer=_transformer_bundle(),
+        prepared=_prepared(),
+        recorded_test_example_id_sha256=_recorded_hash(),
+    )
+    payload = evaluate._run_identity_payload(
+        identity=identity,
+        baseline_run_id="intentguard-baseline-1fb62b1bb463-059ee4b12214",
+        transformer_run_id="intentguard-distilbert-1fb62b1bb463-88e538757339",
+        threshold=0.5,
+        unsupported_fixture_sha256="0" * 64,
+    )
+
+    assert payload["calibration_bin_count"] == 15
+    assert payload["calibration_binning"] == "equal_width_left_closed"
+    assert payload["latency_warm_up_requests"] == 20
+    assert payload["latency_measured_requests"] == 200
+    assert payload["latency_sample_seed"] == 42
+    # The fixture's content, not merely its row count: rewording a curated request
+    # changes a reported number, so it must produce a different run ID.
+    assert payload["unsupported_fixture_sha256"] == "0" * 64
+    assert payload["unsupported_fixture_schema_version"] == 1
+
+    for key in payload:
+        assert not key.endswith(("_ms", "_seconds", "_duration")), (
+            f"{key} is a timing; a duration in the identity would give two runs of "
+            "one configuration two different run IDs"
+        )
+    assert json.loads(json.dumps(payload, sort_keys=True))
 
 
 def test_evaluation_computes_no_metrics_of_its_own() -> None:

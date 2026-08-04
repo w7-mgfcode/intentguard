@@ -32,7 +32,7 @@ the only guard that can catch that.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
@@ -428,6 +428,68 @@ def _percentage(value: float) -> str:
     return f"{value * 100:.2f}%"
 
 
+def _calibration_direction_sentence(
+    subject: str,
+    calibration: Mapping[str, object],
+    number: Callable[[Mapping[str, object], str], float],
+) -> str:
+    """State which way a model's confidence is miscalibrated, in words.
+
+    The two directions are not interchangeable. An overconfident model asserts
+    correctness it does not have, so abstention protects a caller from it. An
+    underconfident model abstains on answers it would have got right, so the cost
+    is coverage rather than trust. A table of two numbers leaves that inference to
+    the reader; AC-004 asks for results to be reported.
+    """
+
+    confidence = number(calibration, "mean_confidence")
+    accuracy = number(calibration, "accuracy")
+    error = number(calibration, "expected_calibration_error")
+    gap = abs(confidence - accuracy)
+
+    if confidence > accuracy:
+        return (
+            f"{subject} is overconfident: its mean confidence of {confidence:.4f} "
+            f"exceeds its accuracy of {accuracy:.4f} by {gap:.4f}, so a confidence "
+            f"score reads as a stronger claim than the model can support "
+            f"(ECE {error:.4f})."
+        )
+    if confidence < accuracy:
+        return (
+            f"{subject} is underconfident: its mean confidence of {confidence:.4f} "
+            f"falls below its accuracy of {accuracy:.4f} by {gap:.4f}, so its scores "
+            f"understate how often it is right and abstention discards answers it "
+            f"would have got correct (ECE {error:.4f})."
+        )
+    return (
+        f"{subject} has a mean confidence equal to its accuracy at {accuracy:.4f}. "
+        f"That is an aggregate agreement only, not per-bin calibration: the ECE of "
+        f"{error:.4f} is the per-bin disagreement that this average conceals."
+    )
+
+
+def _occupied_confidence_ceiling(calibration: Mapping[str, object]) -> float | None:
+    """Return the upper edge of the highest non-empty bin, or None if unavailable.
+
+    A model whose confidence never approaches 1.0 makes its persisted threshold
+    look implausibly permissive when read as a probability. Reporting the ceiling
+    is what stops that misreading.
+    """
+
+    bins = calibration.get("bins")
+    if not isinstance(bins, list):
+        return None
+    ceiling: float | None = None
+    for entry in bins:
+        if not isinstance(entry, Mapping):
+            return None
+        count = entry.get("count")
+        upper = entry.get("upper")
+        if isinstance(count, int) and count > 0 and isinstance(upper, (int, float)):
+            ceiling = float(upper)
+    return ceiling
+
+
 def render_comparison_markdown(
     *,
     run_id: str,
@@ -439,6 +501,11 @@ def render_comparison_markdown(
     verdict: ComparisonVerdict,
     baseline_run_id: str,
     transformer_run_id: str,
+    baseline_calibration: Mapping[str, object] | None = None,
+    transformer_calibration: Mapping[str, object] | None = None,
+    baseline_latency: Mapping[str, object] | None = None,
+    transformer_latency: Mapping[str, object] | None = None,
+    latency_caveat: str | None = None,
 ) -> str:
     """Render the AC-004 comparison table plus the outcome stated in words.
 
@@ -446,6 +513,11 @@ def render_comparison_markdown(
     skims reach the wrong conclusion about which model won; AC-004 asks for the
     result to be *reported*, so the outcome is also written as a sentence that
     cannot be misread.
+
+    The calibration and latency blocks are optional so this renderer stays usable
+    from a test that supplies only classification input. When latency is rendered
+    its caveat is mandatory, because a percentile printed without it invites the
+    service-level reading `ML_SYSTEM_DESIGN.md` forbids.
     """
 
     def _number(metrics: Mapping[str, object], key: str) -> float:
@@ -543,4 +615,87 @@ def render_comparison_markdown(
         "with the overall accuracy above.",
         "",
     ]
+
+    if baseline_calibration is not None and transformer_calibration is not None:
+        bin_count = baseline_calibration.get("bin_count")
+        binning = baseline_calibration.get("binning")
+        lines += [
+            "## Calibration",
+            "",
+            f"Expected calibration error over {bin_count} fixed equal-width bins "
+            f"(`{binning}`). Empty bins are excluded rather than counted as zero "
+            "error, which would understate the gap.",
+            "",
+            "| Quantity | TF-IDF baseline | Fine-tuned DistilBERT |",
+            "|---|---|---|",
+            "| Expected calibration error | "
+            f"{_number(baseline_calibration, 'expected_calibration_error'):.4f} | "
+            f"{_number(transformer_calibration, 'expected_calibration_error'):.4f} |",
+            f"| Mean confidence | {_number(baseline_calibration, 'mean_confidence'):.4f} | "
+            f"{_number(transformer_calibration, 'mean_confidence'):.4f} |",
+            f"| Accuracy | {_number(baseline_calibration, 'accuracy'):.4f} | "
+            f"{_number(transformer_calibration, 'accuracy'):.4f} |",
+            "| Non-empty bins | "
+            f"{_number(baseline_calibration, 'non_empty_bin_count'):.0f} | "
+            f"{_number(transformer_calibration, 'non_empty_bin_count'):.0f} |",
+            "",
+            # Stated in words for the same reason as the outcome sentence above: a
+            # reader who skims the table can reach the wrong conclusion about the
+            # direction, and over- and underconfidence have opposite consequences
+            # for how an abstention threshold should be read.
+            _calibration_direction_sentence(
+                "The TF-IDF baseline", baseline_calibration, _number
+            ),
+            "",
+            _calibration_direction_sentence(
+                "The fine-tuned DistilBERT", transformer_calibration, _number
+            ),
+            "",
+            "These two ECEs are comparable with each other because both models were "
+            "scored against the same fixed bins; an ECE computed under a different "
+            "binning is not comparable with either.",
+            "",
+        ]
+        ceiling = _occupied_confidence_ceiling(transformer_calibration)
+        if ceiling is not None and ceiling < 1.0:
+            lines += [
+                f"No test example received a DistilBERT confidence above "
+                f"{ceiling:.4f}: the highest occupied bin ends there. This is why the "
+                "persisted threshold is low in absolute terms, and it means the "
+                "threshold must be read relative to this model's own confidence "
+                "range rather than as a probability of correctness.",
+                "",
+            ]
+
+    if baseline_latency is not None and transformer_latency is not None:
+        if not latency_caveat:
+            raise EvaluationError(
+                "Rendering latency requires its caveat: a percentile without it "
+                "reads as a service-level claim"
+            )
+        lines += [
+            "## Single-request latency",
+            "",
+            f"Batch size {_number(baseline_latency, 'batch_size'):.0f}, "
+            f"{_number(baseline_latency, 'warm_up_requests'):.0f} discarded warm-up "
+            f"requests, {_number(baseline_latency, 'measured_requests'):.0f} measured "
+            "requests per model, over real test texts.",
+            "",
+            "| Quantity | TF-IDF baseline | Fine-tuned DistilBERT |",
+            "|---|---|---|",
+            f"| p50 | {_number(baseline_latency, 'p50_ms'):.2f} ms | "
+            f"{_number(transformer_latency, 'p50_ms'):.2f} ms |",
+            f"| p95 | {_number(baseline_latency, 'p95_ms'):.2f} ms | "
+            f"{_number(transformer_latency, 'p95_ms'):.2f} ms |",
+            f"| Mean | {_number(baseline_latency, 'mean_ms'):.2f} ms | "
+            f"{_number(transformer_latency, 'mean_ms'):.2f} ms |",
+            "",
+            latency_caveat,
+            "",
+            "Unlike every other section of this report, latency does not reproduce "
+            "between runs of the same configuration. The run ID covers the sampling "
+            "protocol, never the measured durations.",
+            "",
+        ]
+
     return "\n".join(lines) + "\n"
