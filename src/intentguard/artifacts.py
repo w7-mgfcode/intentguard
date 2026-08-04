@@ -236,13 +236,21 @@ def _validate_threshold(threshold: Mapping[str, object]) -> None:
     if not 0.0 <= float(value) <= 1.0:
         raise ArtifactError(f"Threshold value is outside [0, 1]: {value}")
 
+    # Both fields are fractions of the validation set, so a value outside [0, 1] is
+    # meaningless. Checking the range as well as the ordering means a hand-edited
+    # `threshold.json` cannot pass this boundary with an impossible coverage merely
+    # by keeping the two fields consistent with each other.
     coverage = threshold["coverage"]
     if isinstance(coverage, bool) or not isinstance(coverage, (int, float)):
         raise ArtifactError("Threshold coverage must be a real number")
+    if not 0.0 <= float(coverage) <= 1.0:
+        raise ArtifactError(f"Threshold coverage is outside [0, 1]: {coverage}")
 
     minimum = threshold["minimum_coverage"]
     if isinstance(minimum, bool) or not isinstance(minimum, (int, float)):
         raise ArtifactError("Threshold minimum_coverage must be a real number")
+    if not 0.0 <= float(minimum) <= 1.0:
+        raise ArtifactError(f"Threshold minimum_coverage is outside [0, 1]: {minimum}")
     if float(coverage) < float(minimum):
         raise ArtifactError(
             f"Threshold coverage {coverage} is below its own minimum {minimum}"

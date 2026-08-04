@@ -277,6 +277,21 @@ def test_saving_refuses_a_threshold_below_its_own_minimum_coverage(tmp_path: Pat
         _save(tmp_path, threshold=_threshold(coverage=0.5, minimum_coverage=0.7))
 
 
+def test_saving_refuses_a_coverage_outside_the_unit_interval(tmp_path: Path) -> None:
+    # 1.5 coverage still satisfies `coverage >= minimum_coverage`, so the ordering
+    # check cannot catch it. Coverage is a fraction of the validation set, and a
+    # record claiming 150% of it is impossible however self-consistent it looks.
+    with pytest.raises(ArtifactError, match="coverage is outside"):
+        _save(tmp_path, threshold=_threshold(coverage=1.5, minimum_coverage=0.7))
+
+
+def test_saving_refuses_a_minimum_coverage_outside_the_unit_interval(tmp_path: Path) -> None:
+    # A negative floor is below any real coverage, so the ordering check passes and
+    # only the range guard rejects it.
+    with pytest.raises(ArtifactError, match="minimum_coverage is outside"):
+        _save(tmp_path, threshold=_threshold(coverage=0.8, minimum_coverage=-0.5))
+
+
 @pytest.mark.parametrize("value", [0, -1, 1.5, True])
 def test_saving_refuses_a_non_positive_validation_example_count(
     tmp_path: Path, value: object

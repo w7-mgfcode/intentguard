@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import resource
+import sys
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,9 @@ from intentguard.metrics import MetricError, label_id_array
 
 PROBABILITY_SUM_TOLERANCE: Final = 1e-6
 KIBIBYTE: Final = 1024
+
+# Platforms whose `getrusage` reports `ru_maxrss` in bytes rather than kibibytes.
+_BYTE_RU_MAXRSS_PLATFORMS: Final = ("darwin", "freebsd", "openbsd", "netbsd", "dragonfly")
 
 
 class TrainingError(ValueError):
@@ -74,14 +78,26 @@ def resolve_device() -> torch.device:
     return torch.device("cpu")
 
 
+def ru_maxrss_scale(platform_name: str = sys.platform) -> int:
+    """Return the multiplier that converts `ru_maxrss` to bytes on one platform.
+
+    The unit is not portable: Linux reports kibibytes while macOS and the BSDs
+    report bytes. Taking the argument rather than reading `sys.platform` directly
+    keeps both branches testable on whichever machine runs the suite.
+    """
+
+    return 1 if platform_name.startswith(_BYTE_RU_MAXRSS_PLATFORMS) else KIBIBYTE
+
+
 def peak_memory_bytes() -> int:
     """Return peak resident set size for this process in bytes.
 
-    `ru_maxrss` is reported in kibibytes on Linux, so it is scaled here once
-    rather than at each call site.
+    Scaling `ru_maxrss` unconditionally by a kibibyte would over-report by 1024x
+    on macOS and the BSDs, where the field is already in bytes, so the unit is
+    resolved from the platform rather than assumed.
     """
 
-    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * KIBIBYTE
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * ru_maxrss_scale()
 
 
 def runtime_facts(device: torch.device) -> RuntimeFacts:

@@ -258,7 +258,8 @@ def test_full_coverage_and_total_abstention_are_both_representable() -> None:
 
 
 def test_a_selective_risk_tie_is_broken_by_higher_coverage() -> None:
-    # 0.4 and 0.8 both yield a perfect accepted set; 0.4 covers more.
+    # Every candidate at or below 0.4 accepts all three correct examples, so risk
+    # ties at zero and coverage ties at 1.0; the lowest such threshold, 0.0, wins.
     selection = select_threshold(
         [0.4, 0.8, 0.9], [True, True, True], minimum_coverage=0.5
     )

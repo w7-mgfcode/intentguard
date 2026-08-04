@@ -308,6 +308,35 @@ def _curve_from_bundle(bundle: ArtifactBundle) -> tuple[CoveragePoint, ...]:
     )
 
 
+def _reused_runtime(bundle: ArtifactBundle) -> dict[str, object]:
+    """Return the runtime of the run that actually trained the reused bundle.
+
+    Measuring the current process here would stamp this machine's peak memory,
+    thread count, and library versions onto a run that trained nothing, and the
+    report gives a reader no way to tell the two apart. The bundle's immutable
+    `provenance.json` already carries the true training runtime, so it is the only
+    honest source on the reuse path.
+    """
+
+    runtime = bundle.provenance.get("runtime")
+    if not isinstance(runtime, dict) or not runtime:
+        raise ArtifactError(f"Bundle {bundle.run_id} carries no recorded training runtime")
+    return dict(runtime)
+
+
+def _recorded_environment(bundle: ArtifactBundle, field: str) -> object:
+    """Return one environment field as recorded when the bundle was trained.
+
+    Same reasoning as `_reused_runtime`: the report must describe the environment
+    that produced the artifact, not whichever machine happens to rebuild the report.
+    """
+
+    value = bundle.provenance.get(field)
+    if value is None:
+        raise ArtifactError(f"Bundle {bundle.run_id} provenance is missing {field}")
+    return value
+
+
 def _train_one_epoch(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
@@ -610,8 +639,11 @@ def _report_payload(
         "label_map_sha256": prepared.provenance["label_map_sha256"],
         "label_map_hash": label_map_hash(prepared.label_names),
         "validation_example_id_sha256": _example_id_hash(prepared.validation),
-        "dependency_versions": dependency_versions(TRACKED_DEPENDENCIES),
-        "python_version": platform.python_version(),
+        # Read from the bundle, not remeasured. On a fresh run these are identical to
+        # the current process; on the reuse path the current process is not the one
+        # that trained, so measuring it here would misattribute its environment.
+        "dependency_versions": _recorded_environment(bundle, "dependency_versions"),
+        "python_version": _recorded_environment(bundle, "python_version"),
         "runtime": runtime,
         "seed": config.seed,
         "config": _artifact_config_payload(config),
@@ -707,7 +739,7 @@ def main() -> None:
         # rebuilt from the bundle's own validation record, with no model load.
         bundle = load_artifact(destination)
         curve = _curve_from_bundle(bundle)
-        runtime = runtime_payload(runtime_facts(device))
+        runtime = _reused_runtime(bundle)
         _log({"event": "artifact_reused", "run_id": bundle.run_id})
     else:
         bundle, curve, runtime = _fresh_run(config, prepared, run_id, device)
