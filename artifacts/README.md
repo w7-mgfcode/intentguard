@@ -17,4 +17,6 @@ artifacts/intentguard-baseline/<run_id>/
 
 A completed bundle is immutable. Saving refuses to overwrite an existing `run_id`, bundles are staged and renamed into place so an interrupted write publishes nothing, and every checksum is re-verified on load.
 
-U04 will write the transformer artifact and its selected threshold here on the same terms. No transformer artifact or selected threshold exists yet.
+`make train` (U04) writes the transformer bundle on the same terms, adding `model/`, `tokenizer/`, `threshold.json`, and `validation_metrics.json` beside the shared `config.json`, `labels.json`, `provenance.json`, and `manifest.json`. Its manifest covers every nested payload file, so a tampered weight or tokenizer file fails on load. The selected threshold is chosen from validation data only, and saving refuses any threshold not sourced from validation.
+
+Bundles are untracked, so a fresh clone contains none until `make baseline` and `make train` are run.

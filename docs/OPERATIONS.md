@@ -12,14 +12,21 @@ Use the authoritative [implementation command plan](specification/docs/IMPLEMENT
 make setup
 make help
 make data
+make baseline
+make train
 make lint
 make test
 ```
 
 `make setup` installs the exact environment represented by `uv.lock`. `make data`
 loads the pinned BANKING77 revision, writes ignored local provenance, and needs
-network access only when a matching local cache is absent. `make lint` runs Ruff,
-mypy, and the repository-foundation validator. `make test` runs the local tests.
+network access only when a matching local cache is absent. `make baseline` trains,
+reloads, and measures the lexical baseline. `make train` fine-tunes DistilBERT on
+CPU, selects the abstention threshold from validation predictions only, and seals one
+immutable bundle; when a bundle whose content-derived run ID already exists is found,
+it reuses that bundle and rebuilds only the report instead of retraining. `make lint`
+runs Ruff, mypy, and the repository-foundation validator. `make test` runs the local
+tests.
 
 ## Repository lifecycle validation
 
@@ -40,19 +47,17 @@ make lint
 
 All modes run the same repository-content checks and inspect Git read-only. The `local-only` mode requires `main` with no remote or upstream, but it permits the pre-commit state immediately after `git init`.
 
-## Planned command lifecycle
+## Remaining command lifecycle
 
 The remaining intended local lifecycle is:
 
 ```bash
-make baseline
-make train
 make evaluate
 make serve
 make demo
 ```
 
-`make baseline` through `make demo` currently exit non-zero and name their owning
+`make evaluate` through `make demo` currently exit non-zero and name their owning
 umbrella. They must not be used as evidence of ML or API completion.
 
 The threshold lifecycle is fixed: `make train` chooses it from validation predictions and persists it in the immutable transformer artifact; `make evaluate` loads that value and applies it to test predictions without tuning on test labels.
@@ -60,9 +65,9 @@ The threshold lifecycle is fixed: `make train` chooses it from validation predic
 ## Configuration and generated outputs
 
 Reviewed defaults live in `configs/default.toml`. The dataset revision is pinned
-by U02; the model revision remains explicitly unresolved until U04. Local
-settings may be supplied through variables shown in `.env.example`; do not
-commit `.env` files.
+by U02 and the base-model revision is pinned by U04; no unresolved revision gate
+remains. Local settings may be supplied through variables shown in `.env.example`;
+do not commit `.env` files.
 
 Generated data, artifacts, and reports stay under their named root directories and are untracked except for README contracts. Serving must eventually load an already-created artifact; it must never train or mutate that artifact.
 

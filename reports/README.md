@@ -8,4 +8,6 @@ Test metrics are computed from the **reloaded** artifact, never from the in-memo
 
 `REQUIREMENTS.md` AC-002 requires `make baseline` to write test metrics, while `ARCHITECTURE.md` assigns test evaluation to `make evaluate`. `REQUIREMENTS.md` takes precedence, so the baseline report is written here.
 
-U03 writes JSON only. Markdown rendering, calibration, coverage, selective risk, and latency reporting belong to later umbrellas, and none of those have been measured.
+`make train` (U04) writes `reports/train/<run_id>/training.json`, containing the per-epoch training loss and validation metrics, the selected threshold with its coverage, accepted accuracy and selective risk, the full risk/coverage curve, and the same provenance fields. It records no test-derived quantity: the threshold is selected from validation data only, and `make train` reads no test split. `provenance.json` inside the bundle is the authority for runtime facts.
+
+Both reports are JSON only. Markdown rendering, calibration, test-split abstention, and latency reporting belong to later umbrellas, and none of those have been measured.
