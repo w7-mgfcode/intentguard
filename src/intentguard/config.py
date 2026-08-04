@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,28 @@ STATUS_VOCABULARY: Final = (
     "Blocked",
     "Planned",
 )
+APPROVED_BASELINE_SOLVERS: Final = ("lbfgs", "saga")
+APPROVED_BASELINE_CLASS_WEIGHTS: Final = ("balanced", "none")
+
+
+@dataclass(frozen=True)
+class BaselineConfig:
+    """Explicitly resolved TF-IDF logistic-regression hyperparameters.
+
+    Every value is frozen in configuration before the canonical test split is
+    read, so the E03 baseline is never tuned against test labels.
+    """
+
+    lowercase: bool
+    ngram_min: int
+    ngram_max: int
+    max_features: int
+    min_df: int
+    sublinear_tf: bool
+    solver: str
+    regularization_c: float
+    max_iter: int
+    class_weight: str | None
 
 
 @dataclass(frozen=True)
@@ -29,8 +52,11 @@ class FoundationConfig:
     dataset_revision: str
     validation_fraction: float
     data_root: Path
+    artifact_root: Path
+    report_root: Path
     base_model_id: str
     base_model_revision: str
+    baseline: BaselineConfig
     status_vocabulary: tuple[str, ...]
 
 
@@ -58,6 +84,62 @@ def _fraction(table: dict[str, object], name: str) -> float:
     return fraction
 
 
+def _positive_integer(table: dict[str, object], name: str) -> int:
+    value = table.get(name)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"Missing or invalid positive integer: {name}")
+    return value
+
+
+def _positive_float(table: dict[str, object], name: str) -> float:
+    value = table.get(name)
+    # `nan <= 0.0` is false and `inf` is positive, so both pass a naive sign check
+    # and would reach the estimator. Require a finite value explicitly.
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or value <= 0.0
+    ):
+        raise ValueError(f"Missing or invalid positive number: {name}")
+    return float(value)
+
+
+def _boolean(table: dict[str, object], name: str) -> bool:
+    value = table.get(name)
+    if not isinstance(value, bool):
+        raise ValueError(f"Missing or invalid boolean: {name}")
+    return value
+
+
+def _choice(table: dict[str, object], name: str, allowed: tuple[str, ...]) -> str:
+    value = _string(table, name)
+    if value not in allowed:
+        raise ValueError(f"Value for {name} must be one of {allowed}")
+    return value
+
+
+def _load_baseline_config(table: dict[str, object]) -> BaselineConfig:
+    ngram_min = _positive_integer(table, "ngram_min")
+    ngram_max = _positive_integer(table, "ngram_max")
+    if ngram_min > ngram_max:
+        raise ValueError("Baseline ngram_min must not exceed ngram_max")
+
+    class_weight = _choice(table, "class_weight", APPROVED_BASELINE_CLASS_WEIGHTS)
+    return BaselineConfig(
+        lowercase=_boolean(table, "lowercase"),
+        ngram_min=ngram_min,
+        ngram_max=ngram_max,
+        max_features=_positive_integer(table, "max_features"),
+        min_df=_positive_integer(table, "min_df"),
+        sublinear_tf=_boolean(table, "sublinear_tf"),
+        solver=_choice(table, "solver", APPROVED_BASELINE_SOLVERS),
+        regularization_c=_positive_float(table, "regularization_c"),
+        max_iter=_positive_integer(table, "max_iter"),
+        class_weight=None if class_weight == "none" else class_weight,
+    )
+
+
 def load_foundation_config(path: Path) -> FoundationConfig:
     """Load and validate identifiers and status vocabulary without ML behavior."""
 
@@ -66,6 +148,7 @@ def load_foundation_config(path: Path) -> FoundationConfig:
 
     project = _table(document, "project")
     data = _table(document, "data")
+    baseline = _table(document, "baseline")
     model = _table(document, "model")
     paths = _table(document, "paths")
     status = _table(document, "status")
@@ -94,7 +177,10 @@ def load_foundation_config(path: Path) -> FoundationConfig:
         dataset_revision=dataset_revision,
         validation_fraction=_fraction(data, "validation_fraction"),
         data_root=Path(_string(paths, "data_root")),
+        artifact_root=Path(_string(paths, "artifact_root")),
+        report_root=Path(_string(paths, "report_root")),
         base_model_id=_string(model, "base_model_id"),
         base_model_revision=_string(model, "base_model_revision"),
+        baseline=_load_baseline_config(baseline),
         status_vocabulary=vocabulary,
     )

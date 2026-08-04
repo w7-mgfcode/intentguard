@@ -125,9 +125,13 @@ def _authored_text_files() -> Iterable[Path]:
         REPOSITORY_ROOT / ".env.example",
     )
     yield from direct
-    for root_name in ("configs", "src", "scripts", "tests", "artifacts", "reports"):
+    for root_name in ("configs", "src", "scripts", "tests"):
         yield from (REPOSITORY_ROOT / root_name).rglob("*")
-    yield REPOSITORY_ROOT / "data" / "README.md"
+    # Only the contract READMEs are authored under the generated roots; model
+    # payloads and JSON reports written there are build output, and scanning
+    # them for authoring placeholders is meaningless.
+    for root_name in ("artifacts", "data", "reports"):
+        yield REPOSITORY_ROOT / root_name / "README.md"
     yield from BACKLOG_ROOT.rglob("*")
     for name in ("OPERATIONS.md", "IMPLEMENTATION_STATUS.md", "LIMITATIONS.md"):
         yield REPOSITORY_ROOT / "docs" / name
@@ -162,7 +166,8 @@ def validate_make_contract() -> None:
     targets = {line.split(":", maxsplit=1)[0] for line in makefile.splitlines() if ": ##" in line}
     assert targets == EXPECTED_TARGETS, f"Unexpected Make targets: {sorted(targets)}"
     assert "uv run --locked python scripts/prepare_data.py" in makefile
-    for umbrella in ("U03", "U04", "U05", "U06"):
+    assert "uv run --locked python scripts/train_baseline.py" in makefile
+    for umbrella in ("U04", "U05", "U06"):
         assert f"Not implemented — tracked by {umbrella}" in makefile
     print("PASSED: developer command presence and explicit future-command failures")
 
@@ -379,6 +384,27 @@ def validate_gate_d_preflight() -> None:
     print("PASSED: executable Gate D migration preflight and state-migration contract")
 
 
+def assert_generated_output_is_untracked(root: Path) -> None:
+    """Assert a generated root holds only its README and untracked build output.
+
+    The contract is that generated artifacts and reports are never committed, not
+    that they never exist. A successful `make baseline` legitimately populates
+    these directories, so this checks tracking status rather than emptiness.
+    """
+
+    relative_root = root.relative_to(REPOSITORY_ROOT).as_posix()
+    tracked_result = _run_git(REPOSITORY_ROOT, "ls-files", "--", relative_root)
+    if tracked_result.returncode != 0:
+        # No functional repository: nothing can be tracked, so the on-disk
+        # README check above is already the whole contract.
+        return
+
+    tracked = {line for line in tracked_result.stdout.splitlines() if line}
+    assert tracked == {f"{relative_root}/README.md"}, (
+        f"Generated output under {relative_root} must stay untracked: {sorted(tracked)}"
+    )
+
+
 def validate_generated_roots_and_specification() -> None:
     ignore_lines = {
         line.strip()
@@ -412,8 +438,9 @@ def validate_generated_roots_and_specification() -> None:
 
     assert (REPOSITORY_ROOT / "data" / "README.md").is_file()
     for name in ("artifacts", "reports"):
-        entries = sorted(path.name for path in (REPOSITORY_ROOT / name).iterdir())
-        assert entries == ["README.md"], f"Unexpected generated content under {name}: {entries}"
+        root = REPOSITORY_ROOT / name
+        assert (root / "README.md").is_file(), f"Missing contract README under {name}"
+        assert_generated_output_is_untracked(root)
 
     authoritative = REPOSITORY_ROOT / "docs" / "specification"
     assert (authoritative / "docs" / "REQUIREMENTS.md").is_file()

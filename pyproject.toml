@@ -9,6 +9,7 @@ authors = [{ name = "w7-mgfcode" }]
 dependencies = [
   "datasets>=3.0,<5",
   "fastapi>=0.115,<1",
+  "joblib>=1.4,<2",
   "numpy>=2.0,<3",
   "pydantic>=2.9,<3",
   "scikit-learn>=1.5,<2",

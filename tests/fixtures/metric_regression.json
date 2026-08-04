@@ -1,0 +1,39 @@
+{
+  "description": "Hand-checked metric regression fixture. Every expected value is an exact rational [numerator, denominator] so it can be verified without executing the implementation. Accuracy, macro-F1, and weighted-F1 are three distinct values, so swapping macro and weighted averaging cannot pass unnoticed.",
+  "metric_version": 1,
+  "label_names": ["alpha", "beta", "gamma"],
+  "y_true": [0, 0, 0, 0, 1, 1, 2],
+  "y_pred": [0, 0, 0, 1, 1, 2, 2],
+  "expected": {
+    "example_count": 7,
+    "accuracy": [5, 7],
+    "macro_f1": [85, 126],
+    "weighted_f1": [107, 147],
+    "per_class": [
+      {
+        "label_id": 0,
+        "label_name": "alpha",
+        "precision": [1, 1],
+        "recall": [3, 4],
+        "f1": [6, 7],
+        "support": 4
+      },
+      {
+        "label_id": 1,
+        "label_name": "beta",
+        "precision": [1, 2],
+        "recall": [1, 2],
+        "f1": [1, 2],
+        "support": 2
+      },
+      {
+        "label_id": 2,
+        "label_name": "gamma",
+        "precision": [1, 2],
+        "recall": [1, 1],
+        "f1": [2, 3],
+        "support": 1
+      }
+    ]
+  }
+}
