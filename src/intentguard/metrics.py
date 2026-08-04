@@ -163,8 +163,12 @@ def compute_calibration_metrics(
     * **Left-closed, right-open** ``[lo, hi)``, except the final bin is closed at
       ``1.0`` so a confidence of exactly 1.0 is binned rather than dropped.
     * **Empty bins contribute nothing.** The sum runs over non-empty bins only.
-      Averaging over all ``bin_count`` bins instead would scale ECE by
-      ``non_empty / bin_count`` and flatter a badly calibrated model.
+      Each bin is weighted by its own mass ``n_b / N``, so an empty bin would add
+      exactly zero even if it were included — the dilution this excludes is the
+      *unweighted* one. Averaging the per-bin gaps over all ``bin_count`` bins
+      rather than over the occupied ones scales that mean by exactly
+      ``non_empty / bin_count``, which flatters whichever model leaves more bins
+      empty — typically the worse-calibrated one.
 
     ``ECE = sum_b (n_b / N) * |accuracy_b - mean_confidence_b|`` over non-empty bins.
     Because the weights of the non-empty bins sum to exactly one, ECE stays a

@@ -37,7 +37,7 @@
     ]
   },
   "calibration": {
-    "description": "Hand-checked ECE over 5 equal-width bins, small enough to verify on paper while exercising every D15 clause. Bin [0.2,0.4) is empty and must contribute nothing; bin [0.4,0.6) is perfectly calibrated so its gap is exactly 0; the final bin is closed so confidence 1.0 is binned rather than dropped. Averaging over all 5 bins instead of the 4 non-empty ones yields 1/60 rather than 1/12, so that dilution cannot pass unnoticed.",
+    "description": "Hand-checked ECE over 5 equal-width bins, small enough to verify on paper while exercising every D15 clause. Bin [0.2,0.4) is empty and must contribute nothing; bin [0.4,0.6) is perfectly calibrated so its gap is exactly 0; the final bin is closed so confidence 1.0 is binned rather than dropped. Because every bin is weighted by its own mass, including the empty bin adds exactly zero to ECE; the dilution this fixture pins down is the unweighted one, where averaging the per-bin gaps over all 5 bins yields 9/100 instead of 9/80 over the 4 occupied ones — a factor of exactly non_empty/bin_count = 4/5.",
     "bin_count": 5,
     "confidences": [0.1, 0.5, 0.5, 0.7, 0.9, 1.0],
     "correct": [false, false, true, true, true, true],
@@ -47,7 +47,8 @@
       "expected_calibration_error": [1, 12],
       "mean_confidence": [37, 60],
       "accuracy": [2, 3],
-      "diluted_by_all_bins_would_be": [1, 60],
+      "unweighted_gap_mean_over_non_empty_bins": [9, 80],
+      "unweighted_gap_mean_over_all_bins": [9, 100],
       "bins": [
         {
           "lower": [0, 1],

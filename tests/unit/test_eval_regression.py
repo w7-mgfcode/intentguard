@@ -12,9 +12,10 @@ change in metric semantics must be an explicit decision that bumps
 
 The calibration half pins ECE the same way. Its six confidences exercise each
 D15 clause at once: one bin is empty, one is perfectly calibrated, and one
-confidence is exactly 1.0. Averaging over all bins rather than the non-empty ones
-would report 1/60 instead of 1/12, so the dilution error this fixture exists to
-catch is a 5x discrepancy rather than a rounding difference.
+confidence is exactly 1.0. Since every bin is weighted by its own mass, the empty
+bin adds exactly zero to ECE; the dilution this fixture pins down is therefore the
+unweighted one, where averaging the per-bin gaps over all 5 bins gives 9/100
+instead of 9/80 over the 4 occupied ones — scaled by exactly non_empty/bin_count.
 """
 
 from __future__ import annotations
@@ -139,22 +140,43 @@ def test_hand_checked_expected_calibration_error() -> None:
 
 
 def test_empty_bins_are_excluded_rather_than_counted_as_zero_error() -> None:
-    """The dilution trap: averaging over all bins would report 1/60, not 1/12.
+    """The dilution trap, stated as the arithmetic it actually is.
 
-    An empty bin has no observation to disagree with, so treating its gap as a
-    real zero and dividing by ``bin_count`` scales ECE by non_empty/bin_count and
-    flatters a badly calibrated model. Here that is a 5x understatement.
+    An empty bin has no observation to disagree with, so its gap of 0.0 records
+    absence of evidence rather than perfect calibration. Averaging the per-bin gaps
+    over ``bin_count`` instead of over the occupied bins scales that mean by exactly
+    ``non_empty / bin_count``, flattering whichever model leaves more bins empty.
+
+    The scaling factor is asserted rather than a mere inequality: a test that only
+    checks "the diluted value differs" would pass for any wrong number, including a
+    formula that does not match the one the docstrings and ``reports/README.md``
+    describe.
     """
 
     metrics = _calibration()
-    correct_value = _exact(CALIBRATION_EXPECTED["expected_calibration_error"])
-    diluted = _exact(CALIBRATION_EXPECTED["diluted_by_all_bins_would_be"])
+    over_non_empty = _exact(CALIBRATION_EXPECTED["unweighted_gap_mean_over_non_empty_bins"])
+    over_all = _exact(CALIBRATION_EXPECTED["unweighted_gap_mean_over_all_bins"])
 
-    assert diluted != pytest.approx(correct_value, abs=TOLERANCE)
-    assert metrics.expected_calibration_error == pytest.approx(correct_value, abs=TOLERANCE)
-    assert metrics.expected_calibration_error != pytest.approx(diluted, abs=TOLERANCE)
     assert metrics.non_empty_bin_count < metrics.bin_count, (
         "This fixture must contain an empty bin or it cannot detect the dilution"
+    )
+
+    gaps = [entry.gap for entry in metrics.bins]
+    assert sum(gaps) / metrics.non_empty_bin_count == pytest.approx(
+        over_non_empty, abs=TOLERANCE
+    )
+    assert sum(gaps) / metrics.bin_count == pytest.approx(over_all, abs=TOLERANCE)
+
+    # The documented factor, verified rather than asserted by inequality alone.
+    assert over_all == pytest.approx(
+        over_non_empty * metrics.non_empty_bin_count / metrics.bin_count, abs=TOLERANCE
+    )
+    assert over_all < over_non_empty, "Dilution must understate, or it is not a trap"
+
+    # ECE itself is a mass-weighted sum, so it is immune to this dilution entirely —
+    # which is why the fixture pins the unweighted means instead of claiming ECE moves.
+    assert metrics.expected_calibration_error == pytest.approx(
+        _exact(CALIBRATION_EXPECTED["expected_calibration_error"]), abs=TOLERANCE
     )
 
 
