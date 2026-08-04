@@ -383,6 +383,7 @@ source = { editable = "." }
 dependencies = [
     { name = "datasets" },
     { name = "fastapi" },
+    { name = "joblib" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "scikit-learn" },
@@ -404,6 +405,7 @@ dev = [
 requires-dist = [
     { name = "datasets", specifier = ">=3.0,<5" },
     { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "joblib", specifier = ">=1.4,<2" },
     { name = "numpy", specifier = ">=2.0,<3" },
     { name = "pydantic", specifier = ">=2.9,<3" },
     { name = "scikit-learn", specifier = ">=1.5,<2" },

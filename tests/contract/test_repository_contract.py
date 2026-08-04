@@ -19,6 +19,8 @@ class _FoundationValidator(Protocol):
 
     def assert_git_state(self, state: object, expected: str) -> None: ...
 
+    def assert_generated_output_is_untracked(self, root: Path) -> None: ...
+
 
 def _load_foundation_validator() -> _FoundationValidator:
     validator_path = REPOSITORY_ROOT / "scripts" / "validate_foundation.py"
@@ -122,8 +124,18 @@ def test_authoritative_specification_remains_in_place() -> None:
 def test_generated_roots_retain_their_contract_readmes() -> None:
     assert (REPOSITORY_ROOT / "data" / "README.md").is_file()
     for name in ("artifacts", "reports"):
-        entries = sorted(path.name for path in (REPOSITORY_ROOT / name).iterdir())
-        assert entries == ["README.md"]
+        assert (REPOSITORY_ROOT / name / "README.md").is_file()
+
+
+def test_generated_output_is_never_tracked() -> None:
+    """Generated artifacts and reports may exist on disk but must stay untracked.
+
+    `make baseline` legitimately writes into these roots, so the contract is
+    about Git tracking, not about the directories being empty.
+    """
+
+    for name in ("artifacts", "reports"):
+        VALIDATOR.assert_generated_output_is_untracked(REPOSITORY_ROOT / name)
 
 
 def test_makefile_exposes_the_complete_command_contract() -> None:
@@ -144,12 +156,20 @@ def test_makefile_exposes_the_complete_command_contract() -> None:
     }
 
 
-def test_unimplemented_commands_are_explicit() -> None:
+def test_implemented_commands_are_wired_to_their_scripts() -> None:
     makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert "uv run --locked python scripts/prepare_data.py" in makefile
-    for umbrella in ("U03", "U04", "U05", "U06"):
+    assert "uv run --locked python scripts/train_baseline.py" in makefile
+    assert (REPOSITORY_ROOT / "scripts" / "train_baseline.py").is_file()
+
+
+def test_unimplemented_commands_are_explicit() -> None:
+    makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    for umbrella in ("U04", "U05", "U06"):
         assert f"Not implemented — tracked by {umbrella}" in makefile
+    assert "Not implemented — tracked by U03" not in makefile
 
 
 def test_default_any_mode_accepts_initialized_repository() -> None:

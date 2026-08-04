@@ -11,9 +11,8 @@ setup: ## Install the Python 3.11 locked environment
 data: ## Download, validate, and record pinned BANKING77 provenance (U02)
 	uv run --locked python scripts/prepare_data.py
 
-baseline: ## Train and evaluate the lexical baseline (U03)
-	@printf '%s\n' 'Not implemented — tracked by U03' >&2
-	@false
+baseline: ## Train, persist, reload, and measure the lexical baseline (U03)
+	uv run --locked python scripts/train_baseline.py
 
 train: ## Fine-tune DistilBERT and persist the selected threshold (U04)
 	@printf '%s\n' 'Not implemented — tracked by U04' >&2
