@@ -176,12 +176,14 @@ def validate_make_contract() -> None:
     assert "uv run --locked python scripts/prepare_data.py" in makefile
     assert "uv run --locked python scripts/train_baseline.py" in makefile
     assert "uv run --locked python scripts/train_transformer.py" in makefile
-    # U04 is wired now, so its placeholder must be gone rather than left beside a
-    # working recipe. U05 and U06 remain unimplemented and must keep failing
-    # explicitly instead of exiting zero.
-    for umbrella in ("U05", "U06"):
+    assert "uv run --locked python scripts/evaluate.py" in makefile
+    # U05 is wired now, so its placeholder must be gone rather than left beside a
+    # working recipe. U06 remains unimplemented and must keep failing explicitly
+    # instead of exiting zero.
+    for umbrella in ("U06",):
         assert f"Not implemented — tracked by {umbrella}" in makefile
-    assert "Not implemented — tracked by U04" not in makefile
+    for umbrella in ("U04", "U05"):
+        assert f"Not implemented — tracked by {umbrella}" not in makefile
     print("PASSED: developer command presence and explicit future-command failures")
 
 

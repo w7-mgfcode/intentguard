@@ -14,6 +14,7 @@ make help
 make data
 make baseline
 make train
+make evaluate
 make lint
 make test
 ```
@@ -24,9 +25,22 @@ network access only when a matching local cache is absent. `make baseline` train
 reloads, and measures the lexical baseline. `make train` fine-tunes DistilBERT on
 CPU, selects the abstention threshold from validation predictions only, and seals one
 immutable bundle; when a bundle whose content-derived run ID already exists is found,
-it reuses that bundle and rebuilds only the report instead of retraining. `make lint`
-runs Ruff, mypy, and the repository-foundation validator. `make test` runs the local
-tests.
+it reuses that bundle and rebuilds only the report instead of retraining. `make evaluate`
+loads both sealed bundles, reads the persisted threshold, and measures both models on the
+untouched test split. `make lint` runs Ruff, mypy, and the repository-foundation
+validator. `make test` runs the local tests.
+
+`make evaluate` requires exactly one bundle under each of
+`artifacts/intentguard-baseline/` and `artifacts/intentguard-distilbert/`. If a
+superseded bundle is left beside a current one the run stops and names both rather
+than guessing, because attributing metrics to the wrong configuration is worse than
+failing. Remove the superseded bundle before rerunning.
+
+Before predicting anything, `make evaluate` proves the two bundles agree with each
+other and with the locally prepared splits on dataset id, dataset revision, label-map
+hash, all three split fingerprints, and the hash of the evaluated test example IDs. A
+disagreement is a hard failure: comparing two models trained on different data would
+produce a number that looks like a comparison but is not one.
 
 ## Repository lifecycle validation
 
@@ -52,15 +66,18 @@ All modes run the same repository-content checks and inspect Git read-only. The 
 The remaining intended local lifecycle is:
 
 ```bash
-make evaluate
 make serve
 make demo
 ```
 
-`make evaluate` through `make demo` currently exit non-zero and name their owning
-umbrella. They must not be used as evidence of ML or API completion.
+`make serve` and `make demo` currently exit non-zero and name their owning umbrella
+(U06). They must not be used as evidence of API completion.
 
-The threshold lifecycle is fixed: `make train` chooses it from validation predictions and persists it in the immutable transformer artifact; `make evaluate` loads that value and applies it to test predictions without tuning on test labels.
+`make evaluate` succeeds, but U05 is **Partial**: calibration error, the risk/coverage
+curve, latency, and the curated unsupported-request fixture are not part of the report
+yet. A successful `make evaluate` is therefore not evidence that U05 is complete.
+
+The threshold lifecycle is fixed: `make train` chooses it from validation predictions and persists it in the immutable transformer artifact; `make evaluate` loads that value and applies it to test predictions without tuning on test labels. `scripts/evaluate.py` imports neither `select_threshold` nor any fitting function, so re-deriving a threshold from test data is not something that code path can express; a test enforces this by inspecting the script's syntax tree rather than trusting a text search.
 
 ## Configuration and generated outputs
 

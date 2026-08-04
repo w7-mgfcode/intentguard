@@ -17,9 +17,8 @@ baseline: ## Train, persist, reload, and measure the lexical baseline (U03)
 train: ## Fine-tune DistilBERT and persist the selected threshold (U04)
 	uv run --locked python scripts/train_transformer.py
 
-evaluate: ## Evaluate the immutable artifact on test data (U05)
-	@printf '%s\n' 'Not implemented — tracked by U05' >&2
-	@false
+evaluate: ## Compare both immutable artifacts on the untouched test split (U05)
+	uv run --locked python scripts/evaluate.py
 
 serve: ## Serve the real immutable artifact through FastAPI (U06)
 	@printf '%s\n' 'Not implemented — tracked by U06' >&2
