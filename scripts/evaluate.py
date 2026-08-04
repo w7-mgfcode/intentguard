@@ -11,7 +11,9 @@ The order of operations here is the correctness control, not a convention:
    derived from it is consumed;
 6. metrics, selective prediction, calibration, and the risk/coverage curve all come
    from one pass over those probabilities, so the test split is read exactly once;
-7. latency is measured last, from the same reloaded artifacts, and the report is
+7. the curated unsupported-request fixture is proven disjoint from every split and
+   then decided once per row at the same threshold, reported separately;
+8. latency is measured last, from the same reloaded artifacts, and the report is
    written.
 
 Nothing in this script fits, trains, or tunes. It calls neither `fit_pipeline` nor
@@ -27,9 +29,10 @@ plainly rather than softening it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Final
@@ -97,6 +100,16 @@ from intentguard.training import (
     resolve_device,
 )
 from intentguard.training import predict_probabilities as transformer_probabilities
+from intentguard.unsupported import (
+    FIXTURE_SCHEMA_VERSION,
+    UNSUPPORTED_FIXTURE_CAVEAT,
+    UnsupportedFixtureError,
+    UnsupportedOutcome,
+    assert_disjoint_from_splits,
+    evaluate_unsupported_requests,
+    load_unsupported_fixture,
+    render_unsupported_markdown,
+)
 
 REPOSITORY_ROOT: Final = Path(__file__).resolve().parents[1]
 EVALUATION_NAME: Final = "intentguard-evaluation"
@@ -108,6 +121,11 @@ TRANSFORMER_TOKENIZER_DIRECTORY: Final = "tokenizer"
 BASELINE_REPORT_FILENAME: Final = "metrics.json"
 COMPARISON_JSON_FILENAME: Final = "comparison.json"
 COMPARISON_MARKDOWN_FILENAME: Final = "comparison.md"
+UNSUPPORTED_JSON_FILENAME: Final = "unsupported_fixture.json"
+UNSUPPORTED_MARKDOWN_FILENAME: Final = "unsupported_fixture.md"
+UNSUPPORTED_FIXTURE_PATH: Final = (
+    REPOSITORY_ROOT / "tests" / "fixtures" / "unsupported_requests.jsonl"
+)
 TRACKED_DEPENDENCIES: Final = (
     "joblib",
     "numpy",
@@ -308,12 +326,98 @@ def _transformer_single_request(
     return predict_one
 
 
+def _fixture_content_hash(path: Path) -> str:
+    """Hash the fixture bytes so the run ID tracks the fixture that was evaluated."""
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _unsupported_outcome(
+    bundle: ArtifactBundle,
+    config: FoundationConfig,
+    label_names: tuple[str, ...],
+    prepared: PreparedDataset,
+    threshold: float,
+) -> UnsupportedOutcome:
+    """Run the curated fixture through the transformer artifact serving will load.
+
+    Measured on the transformer rather than the baseline because the transformer is
+    the artifact the API loads, so this is the abstention behaviour a caller would
+    actually encounter. The disjointness proof runs *before* prediction: if a row
+    turns out to collide with a split, the honest response is to fix the fixture,
+    not to publish an abstention rate that partly measures memorisation.
+    """
+
+    requests = load_unsupported_fixture(UNSUPPORTED_FIXTURE_PATH)
+    assert_disjoint_from_splits(
+        requests,
+        {
+            "train": [example.text for example in prepared.train],
+            "validation": [example.text for example in prepared.validation],
+            "test": [example.text for example in prepared.test],
+        },
+    )
+
+    def predict(texts: Sequence[str]) -> tuple[Sequence[float], Sequence[str]]:
+        probabilities = _transformer_predictions(bundle, config, list(texts), label_names)
+        confidences = confidences_from_probabilities(probabilities)
+        predicted = labels_from_probabilities(probabilities)
+        return confidences, [label_names[index] for index in predicted]
+
+    return evaluate_unsupported_requests(
+        requests,
+        predict=predict,
+        threshold=threshold,
+    )
+
+
+def _in_distribution_contrast(
+    unsupported: UnsupportedOutcome,
+    *,
+    transformer_selective: SelectiveOutcome,
+    transformer_calibration: CalibrationMetrics,
+) -> dict[str, object]:
+    """Add the in-distribution contrast that decides whether the result means anything.
+
+    A 100% abstention rate on this fixture is only evidence of discrimination if the
+    same model does *not* abstain on everything. Since this transformer is
+    underconfident overall, that objection is live and has to be answered with
+    numbers rather than assumed away — so the block carries the model's test-split
+    abstention rate and mean confidence beside the fixture's own.
+
+    The interpretation is derived, not asserted: if a future run abstains on the
+    fixture while also abstaining on nearly all test data, `discriminates` becomes
+    false and the recorded conclusion changes with it.
+    """
+
+    fixture_confidences = [sample.confidence for sample in unsupported.samples]
+    fixture_mean = sum(fixture_confidences) / len(fixture_confidences)
+    separation = transformer_calibration.mean_confidence - fixture_mean
+    return {
+        "test_abstention_rate": transformer_selective.abstention_rate,
+        "test_mean_confidence": transformer_calibration.mean_confidence,
+        "fixture_mean_confidence": fixture_mean,
+        "fixture_max_confidence": max(fixture_confidences),
+        "mean_confidence_separation": separation,
+        "discriminates": (
+            unsupported.abstention_rate > transformer_selective.abstention_rate
+            and separation > 0.0
+        ),
+        "why_this_matters": (
+            "An abstention rate on this fixture means nothing on its own: a model "
+            "that abstained on everything would score the same. It is evidence of "
+            "discrimination only in contrast with the test-split rate beside it."
+        ),
+    }
+
+
 def _run_identity_payload(
     *,
     identity: SharedDataIdentity,
     baseline_run_id: str,
     transformer_run_id: str,
     threshold: float,
+    unsupported_fixture_sha256: str,
 ) -> dict[str, object]:
     """Render every input that changes a reported number, so the run ID tracks it.
 
@@ -343,6 +447,11 @@ def _run_identity_payload(
         "latency_warm_up_requests": WARM_UP_REQUESTS,
         "latency_measured_requests": MEASURED_REQUESTS,
         "latency_sample_seed": SAMPLE_SEED,
+        # Editing the curated fixture changes a reported number, so its content is
+        # part of the identity. Hashing the rows rather than counting them means a
+        # reworded request produces a new run ID instead of silently reusing one.
+        "unsupported_fixture_sha256": unsupported_fixture_sha256,
+        "unsupported_fixture_schema_version": FIXTURE_SCHEMA_VERSION,
     }
 
 
@@ -539,6 +648,16 @@ def main() -> None:
         max_sequence_length=config.training.max_sequence_length,
     )
 
+    unsupported = _unsupported_outcome(
+        transformer, config, label_names, prepared, threshold
+    )
+    contrast = _in_distribution_contrast(
+        unsupported,
+        transformer_selective=transformer_selective,
+        transformer_calibration=transformer_calibration,
+    )
+    unsupported_block = {**unsupported.payload(), "in_distribution_contrast": contrast}
+
     verdict = compare_metric(
         baseline_value=baseline_metrics.macro_f1,
         transformer_value=transformer_metrics.macro_f1,
@@ -552,6 +671,7 @@ def main() -> None:
             baseline_run_id=baseline.run_id,
             transformer_run_id=transformer.run_id,
             threshold=threshold,
+            unsupported_fixture_sha256=_fixture_content_hash(UNSUPPORTED_FIXTURE_PATH),
         ),
     )
 
@@ -586,6 +706,10 @@ def main() -> None:
             ),
         },
         "comparison": verdict.payload(),
+        # Kept out of the `models` block and given its own file as well: FR-009
+        # requires this reported *separately* from BANKING77 benchmark metrics, and
+        # nesting it beside accuracy is how the two would come to be quoted together.
+        "unsupported_fixture": unsupported_block,
         "latency_protocol": {
             "samples": latency_samples.payload(),
             "sampled_from": "test",
@@ -610,8 +734,7 @@ def main() -> None:
             "device": str(resolve_device()),
         },
         "limitations": [
-            "The curated unsupported-request fixture is not part of this report "
-            "yet; it is tracked by S05.3.",
+            UNSUPPORTED_FIXTURE_CAVEAT,
             LATENCY_CAVEAT,
             "No GPU throughput claim is evidenced. Evaluation ran on the device "
             "recorded in the environment block.",
@@ -653,6 +776,11 @@ def main() -> None:
             latency_caveat=LATENCY_CAVEAT,
         ),
     )
+    _write_json_atomically(report_directory / UNSUPPORTED_JSON_FILENAME, unsupported_block)
+    _write_text_atomically(
+        report_directory / UNSUPPORTED_MARKDOWN_FILENAME,
+        render_unsupported_markdown(unsupported, contrast=contrast),
+    )
 
     print(
         json.dumps(
@@ -668,6 +796,8 @@ def main() -> None:
                 ),
                 "threshold": threshold,
                 "example_count": baseline_metrics.example_count,
+                "unsupported_fixture_count": unsupported.example_count,
+                "unsupported_abstention_rate": unsupported.abstention_rate,
             },
             sort_keys=True,
         )
@@ -684,6 +814,7 @@ if __name__ == "__main__":
         EvaluationError,
         LatencyError,
         TrainingError,
+        UnsupportedFixtureError,
         ValueError,
     ) as error:
         raise SystemExit(f"Evaluation failed: {error}") from error

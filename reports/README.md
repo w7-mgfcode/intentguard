@@ -16,7 +16,13 @@ Test metrics are computed from the **reloaded** artifact, never from the in-memo
 
 The evaluation `run_id` is derived from everything that can change a reported number — both artifact run IDs, the split fingerprints, the label-map hash, the test example-ID hash, the threshold, the metric and schema versions, the calibration bin count and binning, and the latency sampling protocol. Timings are deliberately excluded: wall-clock latency varies between two runs of the same configuration, so including it would give one evaluation two identities. This is why an evaluation report is rewritten in place on each run rather than sealed like an artifact bundle, and why rerunning `make evaluate` unchanged produces the same directory rather than a second one.
 
-The baseline and transformer reports are JSON only; the evaluation report adds the Markdown rendering described above. The curated unsupported-request fixture belongs to S05.3 and has not been measured, which is why U05 is Partial rather than Implemented.
+The baseline and transformer reports are JSON only; the evaluation report adds the Markdown rendering described above.
+
+`make evaluate` also writes `reports/evaluate/<run_id>/unsupported_fixture.json` and `unsupported_fixture.md` for the curated unsupported-request check (FR-009, AC-012). It is kept in its own pair of files, and mirrored as one block inside `comparison.json`, because it is a different kind of evidence from the test-split metrics beside it: a hand-written fixture cannot be pooled with a measured split without implying it was sampled the same way.
+
+Editing that fixture changes the evaluation `run_id`. Its bytes are hashed into the run identity alongside its schema version, so a reworded request yields a new identity rather than silently reusing one — but the hash is identity input only and is not itself a report field.
+
+Both files carry the mandated caveat verbatim and state that no accuracy is reported, because no BANKING77 intent is correct for any curated row. The Markdown renderer refuses outright to print a total abstention rate without the in-distribution rate beside it: "abstained on all 12" without "and accepted most of the test split" is the sentence a reader would mistake for detection evidence, so the failure is loud instead of flattering.
 
 ## Calibration and latency
 

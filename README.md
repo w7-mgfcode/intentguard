@@ -2,11 +2,13 @@
 
 Confidence-aware support intent classification with reproducible evaluation, selective prediction, and a typed FastAPI inference boundary.
 
-> The foundation, BANKING77 data contract, TF-IDF baseline, and DistilBERT training path are implemented. Comparative test evaluation runs and is measured, now including calibration, risk/coverage curves, and single-request latency, but remains partial: the curated unsupported-request fixture is outstanding. The API and the real-artifact demo remain planned, and their Make targets deliberately fail until their MUST umbrellas are delivered.
+> The foundation, BANKING77 data contract, TF-IDF baseline, DistilBERT training path, and comparative evaluation are implemented. Evaluation is measured on the untouched test split and covers calibration, risk/coverage curves, single-request latency, and a curated unsupported-request check. The API and the real-artifact demo remain planned, and their Make targets deliberately fail until their MUST umbrellas are delivered.
 >
 > **Measured result:** on the held-out test split the TF-IDF baseline reaches macro-F1 0.8654 and the fine-tuned DistilBERT reaches 0.6620. The baseline wins by 0.2034. Reporting that honestly is what AC-004 asks for; nothing was retuned after the number was seen.
 >
-> **Measured caveat:** neither model is well calibrated. Both are underconfident — baseline ECE 0.4883, transformer ECE 0.4697 — so a confidence score is a ranking signal for abstention, not a probability of correctness. Single-request latency on one measured CPU is 0.53 ms p50 for the baseline and 8.81 ms p50 for the transformer; that is descriptive for that machine and that run, not a service level, and it is the one reported figure that moves between runs of the same configuration.
+> **Measured caveat:** neither model is well calibrated. Both are underconfident — baseline ECE 0.4883, transformer ECE 0.4697 — so a confidence score is a ranking signal for abstention, not a probability of correctness. Single-request latency on one measured CPU is around 0.55 ms p50 for the baseline and in the 8.6–10.7 ms range p50 for the transformer; that is descriptive for that machine, not a service level, and it is the one reported figure that moves between runs of the same configuration — which is why it is quoted as a range here and exactly only in a report that names its run.
+>
+> **Measured, and deliberately not oversold:** all 12 curated unsupported requests abstained at the persisted threshold. That is a behavioral check on a hand-written fixture, not an out-of-distribution benchmark and not evidence of general unsupported-query detection. It is worth reading only beside the in-distribution contrast — mean confidence 0.0503 on those requests against 0.2258 on the test split, where 0.3201 of examples also abstain.
 
 ## What this repository is for
 

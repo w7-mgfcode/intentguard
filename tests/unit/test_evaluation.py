@@ -893,6 +893,7 @@ def test_the_run_identity_records_the_protocol_and_never_a_duration() -> None:
         baseline_run_id="intentguard-baseline-1fb62b1bb463-059ee4b12214",
         transformer_run_id="intentguard-distilbert-1fb62b1bb463-88e538757339",
         threshold=0.5,
+        unsupported_fixture_sha256="0" * 64,
     )
 
     assert payload["calibration_bin_count"] == 15
@@ -900,6 +901,10 @@ def test_the_run_identity_records_the_protocol_and_never_a_duration() -> None:
     assert payload["latency_warm_up_requests"] == 20
     assert payload["latency_measured_requests"] == 200
     assert payload["latency_sample_seed"] == 42
+    # The fixture's content, not merely its row count: rewording a curated request
+    # changes a reported number, so it must produce a different run ID.
+    assert payload["unsupported_fixture_sha256"] == "0" * 64
+    assert payload["unsupported_fixture_schema_version"] == 1
 
     for key in payload:
         assert not key.endswith(("_ms", "_seconds", "_duration")), (

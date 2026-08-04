@@ -73,9 +73,12 @@ make demo
 `make serve` and `make demo` currently exit non-zero and name their owning umbrella
 (U06). They must not be used as evidence of API completion.
 
-`make evaluate` succeeds, but U05 is **Partial**: the curated unsupported-request
-fixture is not part of the report yet. A successful `make evaluate` is therefore not
-evidence that U05 is complete.
+`make evaluate` succeeds and U05 is **Implemented**: the test-split comparison,
+calibration, risk/coverage curves, latency, and the curated unsupported-request check
+are all written. It fails loudly rather than degrading if the curated fixture is
+missing, malformed, or collides with any BANKING77 split — a fixture row that exists
+in training data would make its abstention a measure of memorisation, so that is an
+authoring error to fix and not something the run works around.
 
 `make evaluate` now also measures single-request latency, which accounts for most of
 its roughly 30-second runtime and is the only output that differs between two runs of
