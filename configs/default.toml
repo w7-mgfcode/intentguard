@@ -21,11 +21,23 @@ class_weight = "balanced"
 
 [model]
 base_model_id = "distilbert/distilbert-base-uncased"
-base_model_revision = "UNRESOLVED"
+base_model_revision = "12040accade4e8a0f71eabdb258fecc2e7e948be"
 
 [training]
 max_sequence_length = 96
 threshold_source = "validation"
+epochs = 2
+train_batch_size = 16
+eval_batch_size = 32
+learning_rate = 2e-5
+weight_decay = 0.01
+warmup_ratio = 0.1
+max_grad_norm = 1.0
+selection_metric = "validation_macro_f1"
+
+[threshold]
+minimum_coverage = 0.70
+objective = "selective_risk"
 
 [paths]
 data_root = "data"

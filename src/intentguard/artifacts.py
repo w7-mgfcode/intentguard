@@ -2,7 +2,10 @@
 
 The bundle layout follows `ML_SYSTEM_DESIGN.md`: `artifacts/<name>/<run_id>/`
 holding `config.json`, `labels.json`, `provenance.json`, `manifest.json`, and one
-or more payload files written by the caller.
+or more payload files or directories written by the caller. A transformer bundle
+adds `threshold.json` and `validation_metrics.json`, and its payload is the
+`model/` and `tokenizer/` subdirectories; both extra files are optional so the
+baseline bundle, which has neither, still loads under the same schema.
 
 Three properties matter and are enforced here rather than by convention:
 
@@ -34,7 +37,21 @@ MANIFEST_FILENAME: Final = "manifest.json"
 CONFIG_FILENAME: Final = "config.json"
 LABELS_FILENAME: Final = "labels.json"
 PROVENANCE_FILENAME: Final = "provenance.json"
+THRESHOLD_FILENAME: Final = "threshold.json"
+VALIDATION_METRICS_FILENAME: Final = "validation_metrics.json"
 REQUIRED_METADATA_FILENAMES: Final = (CONFIG_FILENAME, LABELS_FILENAME, PROVENANCE_FILENAME)
+REQUIRED_THRESHOLD_FIELDS: Final = (
+    "accepted_accuracy",
+    "coverage",
+    "minimum_coverage",
+    "rule",
+    "rule_version",
+    "selective_risk",
+    "source",
+    "threshold",
+    "validation_example_count",
+)
+THRESHOLD_SOURCE: Final = "validation"
 REQUIRED_PROVENANCE_FIELDS: Final = (
     "artifact_name",
     "created_at",
@@ -65,6 +82,8 @@ class ArtifactBundle:
     label_names: tuple[str, ...]
     provenance: dict[str, object]
     payload_files: tuple[str, ...]
+    threshold: dict[str, object] | None = None
+    validation_metrics: dict[str, object] | None = None
 
     def path(self, relative_name: str) -> Path:
         """Return the verified path of one payload or metadata file."""
@@ -73,6 +92,34 @@ class ArtifactBundle:
         if not candidate.is_file():
             raise ArtifactError(f"Bundle {self.run_id} has no file {relative_name}")
         return candidate
+
+    def directory_path(self, relative_name: str) -> Path:
+        """Return the verified path of one payload subdirectory.
+
+        A transformer payload is a directory of weights and tokenizer files, so a
+        caller that hands it to `from_pretrained` needs the directory rather than a
+        single file. Every file inside it was checksum-verified on load.
+        """
+
+        candidate = self.directory / relative_name
+        if not candidate.is_dir():
+            raise ArtifactError(f"Bundle {self.run_id} has no directory {relative_name}")
+        return candidate
+
+    def selected_threshold(self) -> float:
+        """Return the persisted abstention threshold, refusing a bundle without one.
+
+        Serving must never invent a default. A bundle with no `threshold.json`
+        cannot answer the accept/abstain question at all, so this raises rather
+        than falling back to a value nobody selected.
+        """
+
+        if self.threshold is None:
+            raise ArtifactError(f"Bundle {self.run_id} carries no selected threshold")
+        value = self.threshold.get("threshold")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ArtifactError(f"Bundle {self.run_id} has a non-numeric threshold")
+        return float(value)
 
 
 def canonical_hash(payload: object) -> str:
@@ -166,6 +213,54 @@ def _validate_provenance(
         raise ArtifactError("Provenance dependency_versions must be a non-empty mapping")
 
 
+def _validate_threshold(threshold: Mapping[str, object]) -> None:
+    """Reject a threshold record that serving could not safely act on.
+
+    The `source` check is the leakage control at the artifact boundary: a bundle
+    whose threshold was not selected from validation data is refused here, so a
+    test-selected threshold cannot be published even if some future caller
+    computed one.
+    """
+
+    missing = [field for field in REQUIRED_THRESHOLD_FIELDS if threshold.get(field) is None]
+    if missing:
+        raise ArtifactError(f"Threshold record is missing required fields: {sorted(missing)}")
+    if threshold["source"] != THRESHOLD_SOURCE:
+        raise ArtifactError(
+            f"Threshold source must be {THRESHOLD_SOURCE!r}, not {threshold['source']!r}"
+        )
+
+    value = threshold["threshold"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ArtifactError("Threshold value must be a real number")
+    if not 0.0 <= float(value) <= 1.0:
+        raise ArtifactError(f"Threshold value is outside [0, 1]: {value}")
+
+    # Both fields are fractions of the validation set, so a value outside [0, 1] is
+    # meaningless. Checking the range as well as the ordering means a hand-edited
+    # `threshold.json` cannot pass this boundary with an impossible coverage merely
+    # by keeping the two fields consistent with each other.
+    coverage = threshold["coverage"]
+    if isinstance(coverage, bool) or not isinstance(coverage, (int, float)):
+        raise ArtifactError("Threshold coverage must be a real number")
+    if not 0.0 <= float(coverage) <= 1.0:
+        raise ArtifactError(f"Threshold coverage is outside [0, 1]: {coverage}")
+
+    minimum = threshold["minimum_coverage"]
+    if isinstance(minimum, bool) or not isinstance(minimum, (int, float)):
+        raise ArtifactError("Threshold minimum_coverage must be a real number")
+    if not 0.0 <= float(minimum) <= 1.0:
+        raise ArtifactError(f"Threshold minimum_coverage is outside [0, 1]: {minimum}")
+    if float(coverage) < float(minimum):
+        raise ArtifactError(
+            f"Threshold coverage {coverage} is below its own minimum {minimum}"
+        )
+
+    count = threshold["validation_example_count"]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ArtifactError("Threshold validation_example_count must be a positive integer")
+
+
 def _write_json(path: Path, payload: object) -> None:
     document = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     path.write_text(document, encoding="utf-8")
@@ -190,13 +285,20 @@ def save_artifact(
     label_names: Sequence[str],
     provenance: Mapping[str, object],
     write_payload: Callable[[Path], None],
+    threshold: Mapping[str, object] | None = None,
+    validation_metrics: Mapping[str, object] | None = None,
 ) -> ArtifactBundle:
     """Stage a complete bundle and publish it atomically, refusing to overwrite.
 
     `write_payload` receives the staging directory and writes the model payload
-    into it. Nothing is visible at the destination until every metadata file, the
-    payload, and the checksum manifest exist, so an interrupted save leaves no
-    half-written bundle behind.
+    into it, either as files or as subdirectories. Nothing is visible at the
+    destination until every metadata file, the payload, and the checksum manifest
+    exist, so an interrupted save leaves no half-written bundle behind.
+
+    `threshold` and `validation_metrics` are optional because the E03 baseline
+    bundle has neither. When a threshold is supplied it is validated before the
+    bundle is published, so an unusable threshold fails the save rather than
+    reaching serving.
     """
 
     if not label_names:
@@ -209,6 +311,8 @@ def save_artifact(
     _validate_provenance(
         provenance, artifact_name=artifact_name, run_id=run_id, label_names=label_names
     )
+    if threshold is not None:
+        _validate_threshold(threshold)
 
     destination = artifact_directory(artifact_root, artifact_name, run_id)
     if destination.exists():
@@ -225,15 +329,22 @@ def save_artifact(
             {"label_count": len(label_names), "label_names": list(label_names)},
         )
         _write_json(staging / PROVENANCE_FILENAME, dict(provenance))
+        if threshold is not None:
+            _write_json(staging / THRESHOLD_FILENAME, dict(threshold))
+        if validation_metrics is not None:
+            _write_json(staging / VALIDATION_METRICS_FILENAME, dict(validation_metrics))
         write_payload(staging)
 
         written = _relative_files(staging)
         absent = [name for name in REQUIRED_METADATA_FILENAMES if name not in written]
         if absent:
             raise ArtifactError(f"Staged bundle is missing metadata files: {sorted(absent)}")
-        payload_files = tuple(
-            name for name in written if name not in REQUIRED_METADATA_FILENAMES
-        )
+        metadata_written = set(REQUIRED_METADATA_FILENAMES)
+        if threshold is not None:
+            metadata_written.add(THRESHOLD_FILENAME)
+        if validation_metrics is not None:
+            metadata_written.add(VALIDATION_METRICS_FILENAME)
+        payload_files = tuple(name for name in written if name not in metadata_written)
         if not payload_files:
             raise ArtifactError("Staged bundle contains no model payload")
 
@@ -350,6 +461,18 @@ def load_artifact(directory: Path) -> ArtifactBundle:
         provenance, artifact_name=artifact_name, run_id=run_id, label_names=resolved
     )
 
+    # Both files are optional so the E03 baseline bundle still loads. When a
+    # threshold is present it is re-validated on every load, not only at save
+    # time, because the bundle on disk is what serving will actually act on.
+    threshold: dict[str, object] | None = None
+    if (directory / THRESHOLD_FILENAME).is_file():
+        threshold = _read_json(directory / THRESHOLD_FILENAME)
+        _validate_threshold(threshold)
+
+    validation_metrics: dict[str, object] | None = None
+    if (directory / VALIDATION_METRICS_FILENAME).is_file():
+        validation_metrics = _read_json(directory / VALIDATION_METRICS_FILENAME)
+
     return ArtifactBundle(
         artifact_name=artifact_name,
         run_id=run_id,
@@ -358,4 +481,6 @@ def load_artifact(directory: Path) -> ArtifactBundle:
         label_names=resolved,
         provenance=provenance,
         payload_files=tuple(cast(list[str], payload_files)),
+        threshold=threshold,
+        validation_metrics=validation_metrics,
     )

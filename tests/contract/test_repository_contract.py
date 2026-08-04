@@ -162,14 +162,19 @@ def test_implemented_commands_are_wired_to_their_scripts() -> None:
     assert "uv run --locked python scripts/prepare_data.py" in makefile
     assert "uv run --locked python scripts/train_baseline.py" in makefile
     assert (REPOSITORY_ROOT / "scripts" / "train_baseline.py").is_file()
+    assert "uv run --locked python scripts/train_transformer.py" in makefile
+    assert (REPOSITORY_ROOT / "scripts" / "train_transformer.py").is_file()
 
 
 def test_unimplemented_commands_are_explicit() -> None:
     makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
 
-    for umbrella in ("U04", "U05", "U06"):
+    for umbrella in ("U05", "U06"):
         assert f"Not implemented — tracked by {umbrella}" in makefile
-    assert "Not implemented — tracked by U03" not in makefile
+    # A wired target must not also carry its placeholder, or `make train` would
+    # report success while the recipe still contained a deliberate failure.
+    for umbrella in ("U03", "U04"):
+        assert f"Not implemented — tracked by {umbrella}" not in makefile
 
 
 def test_default_any_mode_accepts_initialized_repository() -> None:

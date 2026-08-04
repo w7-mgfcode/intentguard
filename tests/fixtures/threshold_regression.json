@@ -1,0 +1,37 @@
+{
+  "description": "Hand-checked threshold-selection regression fixture. Every expected value is an exact rational [numerator, denominator] so it can be verified without executing the implementation. The winning threshold 0.6 is deliberately neither endpoint, neither the maximum-coverage candidate, nor the coverage floor: a selector that maximised coverage would pick 0.0, one that took the lowest eligible coverage would pick 0.65, and one that ignored the coverage floor would pick 0.7 (zero risk at only 60% coverage). All three failures are distinguishable here.",
+  "threshold_rule": "min_selective_risk_at_min_coverage",
+  "threshold_rule_version": 1,
+  "minimum_coverage": 0.7,
+  "confidences": [0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5],
+  "correct": [true, true, true, true, true, true, false, true, false, false],
+  "expected_selection": {
+    "threshold": 0.6,
+    "validation_example_count": 10,
+    "candidate_count": 12,
+    "accepted_count": 8,
+    "coverage": [4, 5],
+    "accepted_accuracy": [7, 8],
+    "selective_risk": [1, 8]
+  },
+  "expected_curve": [
+    {"threshold": 0.0,  "accepted_count": 10, "coverage": [1, 1],  "accepted_accuracy": [7, 10], "selective_risk": [3, 10]},
+    {"threshold": 0.5,  "accepted_count": 10, "coverage": [1, 1],  "accepted_accuracy": [7, 10], "selective_risk": [3, 10]},
+    {"threshold": 0.55, "accepted_count": 9,  "coverage": [9, 10], "accepted_accuracy": [7, 9],  "selective_risk": [2, 9]},
+    {"threshold": 0.6,  "accepted_count": 8,  "coverage": [4, 5],  "accepted_accuracy": [7, 8],  "selective_risk": [1, 8]},
+    {"threshold": 0.65, "accepted_count": 7,  "coverage": [7, 10], "accepted_accuracy": [6, 7],  "selective_risk": [1, 7]},
+    {"threshold": 0.7,  "accepted_count": 6,  "coverage": [3, 5],  "accepted_accuracy": [1, 1],  "selective_risk": [0, 1]},
+    {"threshold": 0.75, "accepted_count": 5,  "coverage": [1, 2],  "accepted_accuracy": [1, 1],  "selective_risk": [0, 1]},
+    {"threshold": 0.8,  "accepted_count": 4,  "coverage": [2, 5],  "accepted_accuracy": [1, 1],  "selective_risk": [0, 1]},
+    {"threshold": 0.85, "accepted_count": 3,  "coverage": [3, 10], "accepted_accuracy": [1, 1],  "selective_risk": [0, 1]},
+    {"threshold": 0.9,  "accepted_count": 2,  "coverage": [1, 5],  "accepted_accuracy": [1, 1],  "selective_risk": [0, 1]},
+    {"threshold": 0.95, "accepted_count": 1,  "coverage": [1, 10], "accepted_accuracy": [1, 1],  "selective_risk": [0, 1]},
+    {"threshold": 1.0,  "accepted_count": 0,  "coverage": [0, 1],  "accepted_accuracy": [0, 1],  "selective_risk": [1, 1]}
+  ],
+  "notes": [
+    "Candidates are the ten unique confidences plus the 0.0 and 1.0 endpoints, hence candidate_count 12.",
+    "Acceptance is confidence >= threshold, so each observed confidence is itself reachable as a boundary.",
+    "The 0.65 candidate has coverage exactly 7/10, equal to the floor, and is therefore eligible: the comparison is inclusive.",
+    "The 0.7 candidate reaches zero selective risk but only 60% coverage, so the floor is what excludes it."
+  ]
+}
