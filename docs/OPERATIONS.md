@@ -15,6 +15,8 @@ make data
 make baseline
 make train
 make evaluate
+make serve
+make demo
 make lint
 make test
 ```
@@ -27,8 +29,10 @@ CPU, selects the abstention threshold from validation predictions only, and seal
 immutable bundle; when a bundle whose content-derived run ID already exists is found,
 it reuses that bundle and rebuilds only the report instead of retraining. `make evaluate`
 loads both sealed bundles, reads the persisted threshold, and measures both models on the
-untouched test split. `make lint` runs Ruff, mypy, and the repository-foundation
-validator. `make test` runs the local tests.
+untouched test split. `make serve` loads one sealed bundle and serves it over HTTP.
+`make demo` starts that same service and exercises it over a real socket. `make lint`
+runs Ruff, mypy, and the repository-foundation validator. `make test` runs the local
+tests.
 
 `make evaluate` requires exactly one bundle under each of
 `artifacts/intentguard-baseline/` and `artifacts/intentguard-distilbert/`. If a
@@ -61,17 +65,58 @@ make lint
 
 All modes run the same repository-content checks and inspect Git read-only. The `local-only` mode requires `main` with no remote or upstream, but it permits the pre-commit state immediately after `git init`.
 
-## Remaining command lifecycle
+## Serving and the strict demonstration
 
-The remaining intended local lifecycle is:
+`make serve` and `make demo` are wired to the real sealed artifact. Both reach
+`python -m intentguard.app`: `make serve` invokes it directly, and `make demo` runs
+`scripts/demo.py`, which starts that same entry point as a child process. The demo
+therefore exercises the shipped serving path rather than a private one.
 
 ```bash
+# Serve the bundle found under the configured artifact root
 make serve
+
+# Start the same service, then prove one accept and one abstain over HTTP
 make demo
 ```
 
-`make serve` and `make demo` currently exit non-zero and name their owning umbrella
-(U06). They must not be used as evidence of API completion.
+`/v1/predict` is a synchronous handler on purpose, so its blocking forward pass runs
+in the threadpool rather than on the event loop. Measured locally with 16 concurrent
+predictions in flight, `/health` answered in 17 ms; the same check against a coroutine
+handler answered in 96 ms, because every request had to wait its turn on the loop.
+Both figures are single observations on one CPU machine, not a service-level claim.
+
+Both commands require an existing transformer bundle and neither can create one:
+serving loads the persisted threshold and has no code path that fits a model,
+selects a threshold, or writes to the artifact. If the bundle is absent or fails a
+checksum, startup raises *before* the port is bound, so a process that is listening
+is a process whose artifact was verified.
+
+Point either command at a bundle outside the default root with
+`INTENTGUARD_ARTIFACT_ROOT`. `INTENTGUARD_HOST` (default `127.0.0.1`),
+`INTENTGUARD_PORT` (default `8000`), and `INTENTGUARD_LOG_LEVEL` (default `INFO`)
+control the listener. The default host is loopback deliberately: the service is
+unauthenticated, so binding every interface is opt-in rather than the default.
+
+`INTENTGUARD_LOG_LEVEL` accepts `CRITICAL`, `ERROR`, `WARNING`, `INFO`, or `DEBUG`,
+case-insensitively — the intersection of what the service logger and Uvicorn each
+understand, not the union. `NOTSET`, `WARN`, and `FATAL` are refused although Python's
+`logging` resolves them, and `TRACE` is refused although Uvicorn accepts it. All four
+are rejected while resolving settings, so an unusable value fails in under a second
+instead of after a 265 MB bundle has been loaded and re-hashed. Every rejection names
+the variable and the accepted set.
+
+`make demo` sends two requests: one in-domain, and the curated unsupported row
+`unsupported-001`, whose abstention was measured in the E05 evaluation. It reports
+the confidences it observed but asserts only the two decisions — pinning a
+confidence would convert a measurement into a fixture. It chooses its own ephemeral
+port so a `make serve` already running is not disturbed, and terminates the child in
+a `finally` block, escalating to `kill`, so no process outlives the target. If
+either decision does not hold the demo exits non-zero; that is a real observation
+about the loaded artifact and must not be resolved by changing the model or the
+threshold.
+
+## Evaluation and the threshold lifecycle
 
 `make evaluate` succeeds and U05 is **Implemented**: the test-split comparison,
 calibration, risk/coverage curves, latency, and the curated unsupported-request check
@@ -96,7 +141,7 @@ by U02 and the base-model revision is pinned by U04; no unresolved revision gate
 remains. Local settings may be supplied through variables shown in `.env.example`;
 do not commit `.env` files.
 
-Generated data, artifacts, and reports stay under their named root directories and are untracked except for README contracts. Serving must eventually load an already-created artifact; it must never train or mutate that artifact.
+Generated data, artifacts, and reports stay under their named root directories and are untracked except for README contracts. Serving loads an already-created artifact and never trains or mutates it.
 
 ## CPU and GPU claims
 

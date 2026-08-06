@@ -168,15 +168,31 @@ def test_implemented_commands_are_wired_to_their_scripts() -> None:
     assert (REPOSITORY_ROOT / "scripts" / "evaluate.py").is_file()
 
 
-def test_unimplemented_commands_are_explicit() -> None:
+def test_no_command_still_declares_a_placeholder() -> None:
+    """U06 wired `serve` and `demo`, so the last deliberate failure is gone.
+
+    This test previously required the U06 placeholder to be *present*, which was the
+    honest assertion while those targets only named their owning umbrella. Now every
+    target runs real code and the risk runs the other way: a wired target that still
+    carried its placeholder would report success with a deliberate failure inside it.
+    """
+
     makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
 
-    for umbrella in ("U06",):
-        assert f"Not implemented — tracked by {umbrella}" in makefile
-    # A wired target must not also carry its placeholder, or `make evaluate` would
-    # report success while the recipe still contained a deliberate failure.
-    for umbrella in ("U03", "U04", "U05"):
+    for umbrella in ("U03", "U04", "U05", "U06"):
         assert f"Not implemented — tracked by {umbrella}" not in makefile
+    assert "Not implemented" not in makefile
+
+
+def test_the_serving_commands_are_wired_to_the_real_entry_point() -> None:
+    """`make serve` and `make demo` must run the real artifact path (U06, AC-013)."""
+
+    makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "uv run --locked python -m intentguard.app" in makefile
+    assert (REPOSITORY_ROOT / "src" / "intentguard" / "app.py").is_file()
+    assert "uv run --locked python scripts/demo.py" in makefile
+    assert (REPOSITORY_ROOT / "scripts" / "demo.py").is_file()
 
 
 def test_default_any_mode_accepts_initialized_repository() -> None:

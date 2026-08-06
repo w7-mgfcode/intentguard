@@ -169,6 +169,24 @@ def validate_toml_and_project() -> None:
     print("PASSED: TOML parsing and pyproject/configuration contract")
 
 
+def _recipe_lines(makefile: str, target: str) -> list[str]:
+    """Return the tab-indented recipe lines belonging to one Make target."""
+
+    lines: list[str] = []
+    collecting = False
+    for line in makefile.splitlines():
+        if line.startswith(f"{target}:"):
+            collecting = True
+            continue
+        if collecting:
+            if line.startswith("\t"):
+                lines.append(line.strip())
+                continue
+            if line.strip():
+                break
+    return lines
+
+
 def validate_make_contract() -> None:
     makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
     targets = {line.split(":", maxsplit=1)[0] for line in makefile.splitlines() if ": ##" in line}
@@ -177,14 +195,27 @@ def validate_make_contract() -> None:
     assert "uv run --locked python scripts/train_baseline.py" in makefile
     assert "uv run --locked python scripts/train_transformer.py" in makefile
     assert "uv run --locked python scripts/evaluate.py" in makefile
-    # U05 is wired now, so its placeholder must be gone rather than left beside a
-    # working recipe. U06 remains unimplemented and must keep failing explicitly
-    # instead of exiting zero.
-    for umbrella in ("U06",):
-        assert f"Not implemented — tracked by {umbrella}" in makefile
-    for umbrella in ("U04", "U05"):
+    assert "uv run --locked python -m intentguard.app" in makefile
+    assert "uv run --locked python scripts/demo.py" in makefile
+    # U06 is wired now, so no placeholder may remain for any umbrella: every declared
+    # command must either do its real work or be absent, never exit zero while
+    # pretending. This assertion was inverted for U06 in the same change that wired
+    # `serve` and `demo`, because leaving it as-is would have failed `make lint`.
+    for umbrella in ("U04", "U05", "U06"):
         assert f"Not implemented — tracked by {umbrella}" not in makefile
-    print("PASSED: developer command presence and explicit future-command failures")
+    # Serving must load an artifact, never create one. A `serve` or `demo` recipe that
+    # reached for a training or data script would make the strict demo self-fulfilling,
+    # so their recipe bodies are read and checked rather than assumed.
+    for target in ("serve", "demo"):
+        for line in _recipe_lines(makefile, target):
+            for forbidden in (
+                "scripts/prepare_data.py",
+                "scripts/train_baseline.py",
+                "scripts/train_transformer.py",
+                "scripts/evaluate.py",
+            ):
+                assert forbidden not in line, f"{target} must not run {forbidden}"
+    print("PASSED: developer command presence, no placeholders, and non-training serving")
 
 
 def validate_backlog() -> tuple[dict[str, object], set[str]]:

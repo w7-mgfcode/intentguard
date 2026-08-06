@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
@@ -196,7 +197,18 @@ def _unit_interval(table: dict[str, object], name: str) -> float:
     return float(value)
 
 
-def _load_training_config(table: dict[str, object]) -> TrainingConfig:
+def training_config_from_payload(payload: Mapping[str, object]) -> TrainingConfig:
+    """Validate a training block that came from anywhere, not only from the TOML file.
+
+    Serving reads its preprocessing from the `training` block persisted inside an
+    artifact bundle rather than from `configs/default.toml`, because the live file can
+    be edited after a bundle is sealed. Both paths go through this one function, so a
+    persisted block gets exactly the checks a configured one does — including
+    `threshold_source`, which means a hand-edited bundle claiming a test-selected
+    threshold is refused rather than loaded.
+    """
+
+    table = dict(payload)
     return TrainingConfig(
         max_sequence_length=_positive_integer(table, "max_sequence_length"),
         epochs=_positive_integer(table, "epochs"),
@@ -290,7 +302,7 @@ def load_foundation_config(path: Path) -> FoundationConfig:
         base_model_id=base_model_id,
         base_model_revision=base_model_revision,
         baseline=_load_baseline_config(baseline),
-        training=_load_training_config(training),
+        training=training_config_from_payload(training),
         threshold=_load_threshold_config(threshold),
         status_vocabulary=vocabulary,
     )
