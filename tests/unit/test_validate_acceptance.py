@@ -377,6 +377,171 @@ class TestAc014SelfReference:
         assert row.reason is None
 
 
+class TestTheAuditDoesNotMeasureItself:
+    """E07's own deliverables must not be decided by the verdict they produce.
+
+    T-007, NFR-002, NFR-009, and AC-014 are the audit. An earlier revision decided them
+    from the owning capability's status, which closed a loop: a FAIL verdict was the
+    reason U07 was recorded `Partial`, and a `Partial` U07 then blocked the three rows,
+    so one status became four causes and a truthful FAIL described itself four times
+    over. These tests pin the loop shut from both ends — the rows ignore the verdict,
+    and the verdict still reports everything genuinely downstream of U08.
+    """
+
+    @staticmethod
+    def _orchestration(name: str, statuses: dict[str, str]) -> Any:
+        paths = {
+            "T-007": "scripts/validate_acceptance.py",
+            "NFR-009": "scripts/validate_acceptance.py",
+            "NFR-002": ".github/workflows/ci.yml",
+        }
+        rows = VALIDATOR._orchestration_rows(
+            _identifier(name, epic="E07", path=paths[name]), statuses
+        )
+        assert len(rows) == 1
+        return rows[0]
+
+    @pytest.mark.parametrize("name", ["T-007", "NFR-002", "NFR-009"])
+    def test_a_failing_verdict_does_not_invalidate_completed_orchestration(
+        self, name: str
+    ) -> None:
+        """The gate finding a real problem is not itself a problem with the gate.
+
+        U08 `Planned` makes the verdict FAIL. That must not reach back into E07's rows:
+        the orchestration either exists and ran, or it does not.
+        """
+
+        statuses = {**STATUSES_ALL_IMPLEMENTED, "U08": "Planned"}
+
+        row = self._orchestration(name, statuses)
+
+        assert row.executed_result == "passed"
+        assert row.applicability == "measured"
+        assert row.reason is None
+
+    @pytest.mark.parametrize("name", ["T-007", "NFR-002", "NFR-009"])
+    def test_these_rows_never_depend_on_the_owning_status(self, name: str) -> None:
+        """Whatever U07 is recorded as, these rows report the same observable facts."""
+
+        outcomes = {
+            status: self._orchestration(name, {**STATUSES_ALL_IMPLEMENTED, "U07": status})
+            for status in ("Implemented", "Partial", "Planned", "Blocked")
+        }
+
+        assert {row.executed_result for row in outcomes.values()} == {"passed"}
+        # The declared status is still *recorded* on the row; it just does not decide it.
+        assert {status: row.capability_status for status, row in outcomes.items()} == {
+            status: status for status in outcomes
+        }
+
+    def test_u07_implemented_with_u08_planned_still_fails_strict_mvp(self) -> None:
+        """The reconciliation must not turn the gate green.
+
+        This is the case the whole change hinges on: promoting U07 removed four
+        circular causes, and if it had also removed U08's, the audit would be
+        reporting an unfinished repository as complete.
+        """
+
+        identifiers, secondary = VALIDATOR.load_identifiers()
+        statuses = {**STATUSES_ALL_IMPLEMENTED, "U07": "Implemented", "U08": "Planned"}
+        evidence = VALIDATOR.resolve_evidence({})
+        report = VALIDATOR.build_report(
+            VALIDATOR.audit(identifiers, statuses, evidence), statuses, evidence, secondary
+        )
+
+        strict = report["strict_mvp"]
+        causes = strict["causes"]
+        assert strict["verdict"] == "FAIL"
+        assert any("U08 is Planned" in cause for cause in causes)
+        # Every remaining cause is U08's, and none is E07 reporting on itself.
+        assert all("U07" not in cause for cause in causes)
+        for name in ("T-007", "NFR-002", "NFR-009", "AC-014"):
+            assert all(not cause.startswith(name) for cause in causes)
+
+    def test_the_dependents_of_a_planned_u08_are_still_reported(self) -> None:
+        """Removing the circular rows must not also remove the genuine ones."""
+
+        identifiers, _ = VALIDATOR.load_identifiers()
+        statuses = {**STATUSES_ALL_IMPLEMENTED, "U08": "Planned"}
+        evidence = VALIDATOR.resolve_evidence({})
+        substantive, _ = VALIDATOR.strict_mvp_causes(
+            VALIDATOR.audit(identifiers, statuses, evidence), statuses, evidence
+        )
+
+        for name in ("T-008", "NFR-010"):
+            assert any(cause.startswith(f"{name} is blocked") for cause in substantive), (
+                f"{name} is genuinely blocked by U08 and must still be enumerated"
+            )
+
+    def test_a_missing_orchestration_file_still_fails(self) -> None:
+        """The carve-out is about the verdict, not about excusing absent evidence."""
+
+        row = VALIDATOR._orchestration_rows(
+            _identifier("T-007", epic="E07", path="scripts/does_not_exist.py"),
+            STATUSES_ALL_IMPLEMENTED,
+        )[0]
+
+        assert row.executed_result == "blocked"
+        assert row.reason is not None and "does not exist" in row.reason
+
+    def test_nfr002_fails_if_the_workflow_stops_invoking_the_cpu_checks(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """NFR-002 is evidenced by what CI actually runs, not by the file existing."""
+
+        workflow = tmp_path / "ci.yml"
+        workflow.write_text("name: CPU validation\njobs: {}\n", encoding="utf-8")
+        monkeypatch.setattr(VALIDATOR, "CI_WORKFLOW", workflow)
+
+        row = self._orchestration("NFR-002", STATUSES_ALL_IMPLEMENTED)
+
+        assert row.executed_result == "not_evidenced"
+        assert row.reason is not None and "make test" in row.reason
+
+    def test_the_audit_never_reads_a_ci_step_conclusion_as_a_verdict(self) -> None:
+        """CI's masked acceptance step must not be reachable as an evidence source.
+
+        `continue-on-error: true` makes GitHub record `success` on a step that exited 2.
+        The only safe handling is for the audit to derive nothing from step conclusions
+        at all, so this asserts the script holds no notion of one.
+        """
+
+        source = (REPOSITORY_ROOT / "scripts" / "validate_acceptance.py").read_text(
+            encoding="utf-8"
+        )
+        code = source.split('"""', 2)[2]
+
+        for forbidden in ("continue-on-error", "conclusion", "workflow_run", "gh api"):
+            assert forbidden not in code, (
+                f"the audit must not consult {forbidden!r}; a masked CI step reports "
+                "success while exiting non-zero"
+            )
+
+    def test_the_masked_ci_step_is_recorded_honestly_in_the_documents(self) -> None:
+        """The masking is a limitation, and it has to be written down as one."""
+
+        limitations = (REPOSITORY_ROOT / "docs" / "LIMITATIONS.md").read_text(encoding="utf-8")
+        status = (REPOSITORY_ROOT / "docs" / "IMPLEMENTATION_STATUS.md").read_text(
+            encoding="utf-8"
+        )
+
+        assert "continue-on-error" in limitations
+        assert "exit code 2" in limitations
+        # The status document must not present the green run as a passing verdict.
+        assert "Strict-MVP verdict: FAIL" in status
+        assert "continue-on-error" in status
+
+    def test_the_ci_workflow_still_declares_the_checks_nfr002_names(self) -> None:
+        """A guard on the real file: NFR-002's row is only as good as this."""
+
+        workflow = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        assert "make test" in workflow
+        assert "make acceptance" in workflow
+
+
 class TestFullAudit:
     def test_every_identifier_is_classified(self) -> None:
         identifiers, _ = VALIDATOR.load_identifiers()
