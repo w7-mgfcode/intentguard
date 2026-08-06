@@ -3,6 +3,11 @@ name: CPU validation
 on:
   push:
   pull_request:
+  # Manual dispatch validates an exact ref after an infrastructure non-result,
+  # without manufacturing a commit. An empty commit would evidence a different
+  # tree, and re-running an older run evidences the older head; either would
+  # attribute a verdict to something other than what was audited.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -35,11 +40,13 @@ jobs:
       # and its verdict matches a fully-evidenced local run because environmental gaps
       # are reported separately from failure causes.
       #
-      # The script exits non-zero while any MUST capability is Planned, which is the
-      # truthful state today. `continue-on-error` is used rather than `|| true` so the
-      # step's real exit status stays visible in the run summary: masking it would make
-      # a failing gate render as a pass, which is the one thing this gate exists to
-      # prevent. Remove it once the verdict is expected to be PASS.
+      # This step is enforced: a failure here fails the job. It was masked with
+      # `continue-on-error: true` while the truthful verdict was `FAIL`; that masking was
+      # removed once the degraded audit reported `PASS` on a clean runner, because
+      # keeping it would hide a regression behind a green conclusion.
+      #
+      # Quote the layer you actually ran when reporting a failure:
+      # `scripts/validate_acceptance.py` exits 1, while `make` reports `Error 1` and
+      # exits 2 because the recipe failed.
       - name: Audit acceptance evidence
         run: make acceptance
-        continue-on-error: true
