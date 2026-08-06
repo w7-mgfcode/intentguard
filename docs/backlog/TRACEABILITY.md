@@ -62,7 +62,7 @@ Canonical hierarchy: `M1` milestone → `W01`–`W03` umbrellas → `E01`–`E08
 | AC-011 | W02 | E05 | S05.1 | U05 / C05.1 | `tests/unit/test_eval_regression.py` | `uv run pytest tests/unit/test_eval_regression.py -q` | Hand-checked metric and threshold regression fixture results |
 | AC-012 | W02 | E05 | S05.3 | U05 / C05.3 | `tests/fixtures/unsupported_requests.jsonl` | `make evaluate` | Separate fixture results with no OOD overclaim |
 | AC-013 | W03 | E06 | S06.3 | U06 / C06.3 | `scripts/demo.py` | `make demo` | Five-minute demo output from loaded transformer artifact |
-| AC-014 | W03 | E07 | S07.2 | U07 / C07.2 | `reports/acceptance.json` | `make lint && make test && make evaluate && make demo` | All MUST Implemented and applicable claims Measured |
+| AC-014 | W03 | E07 | S07.2 | U07 / C07.2 | `reports/acceptance.json` | `make lint && make test && make acceptance` | All MUST Implemented and applicable claims Measured |
 
 ## Secondary relationships
 

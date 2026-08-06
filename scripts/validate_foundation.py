@@ -47,6 +47,7 @@ REQUIRED_UMBRELLA_SECTIONS = (
 )
 
 EXPECTED_TARGETS = {
+    "acceptance",
     "baseline",
     "data",
     "demo",
@@ -197,11 +198,12 @@ def validate_make_contract() -> None:
     assert "uv run --locked python scripts/evaluate.py" in makefile
     assert "uv run --locked python -m intentguard.app" in makefile
     assert "uv run --locked python scripts/demo.py" in makefile
+    assert "uv run --locked python scripts/validate_acceptance.py" in makefile
     # U06 is wired now, so no placeholder may remain for any umbrella: every declared
     # command must either do its real work or be absent, never exit zero while
     # pretending. This assertion was inverted for U06 in the same change that wired
     # `serve` and `demo`, because leaving it as-is would have failed `make lint`.
-    for umbrella in ("U04", "U05", "U06"):
+    for umbrella in ("U04", "U05", "U06", "U07"):
         assert f"Not implemented — tracked by {umbrella}" not in makefile
     # Serving must load an artifact, never create one. A `serve` or `demo` recipe that
     # reached for a training or data script would make the strict demo self-fulfilling,

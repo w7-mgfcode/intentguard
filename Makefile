@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup data baseline train evaluate serve demo lint test
+.PHONY: help setup data baseline train evaluate serve demo lint test acceptance
 
 help: ## Show the developer command contract
 	@awk 'BEGIN {FS = ":.*## "; printf "IntentGuard commands:\n"} /^[a-zA-Z_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -33,3 +33,6 @@ lint: ## Run Ruff, mypy, and repository-foundation validation
 
 test: ## Run the truthful foundation test suite
 	uv run --locked pytest -q
+
+acceptance: ## Audit acceptance evidence and issue the strict-MVP verdict (U07)
+	uv run --locked python scripts/validate_acceptance.py

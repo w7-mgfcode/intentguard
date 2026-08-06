@@ -143,6 +143,7 @@ def test_makefile_exposes_the_complete_command_contract() -> None:
     targets = {line.split(":", maxsplit=1)[0] for line in makefile.splitlines() if ": ##" in line}
 
     assert targets == {
+        "acceptance",
         "baseline",
         "data",
         "demo",
@@ -179,7 +180,7 @@ def test_no_command_still_declares_a_placeholder() -> None:
 
     makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
 
-    for umbrella in ("U03", "U04", "U05", "U06"):
+    for umbrella in ("U03", "U04", "U05", "U06", "U07"):
         assert f"Not implemented — tracked by {umbrella}" not in makefile
     assert "Not implemented" not in makefile
 
