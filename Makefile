@@ -21,12 +21,10 @@ evaluate: ## Compare both immutable artifacts on the untouched test split (U05)
 	uv run --locked python scripts/evaluate.py
 
 serve: ## Serve the real immutable artifact through FastAPI (U06)
-	@printf '%s\n' 'Not implemented — tracked by U06' >&2
-	@false
+	uv run --locked python -m intentguard.app
 
 demo: ## Run the strict real-artifact demonstration (U06)
-	@printf '%s\n' 'Not implemented — tracked by U06' >&2
-	@false
+	uv run --locked python scripts/demo.py
 
 lint: ## Run Ruff, mypy, and repository-foundation validation
 	uv run --locked ruff check .
