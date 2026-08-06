@@ -28,3 +28,18 @@ jobs:
         run: make lint
       - name: Run foundation tests
         run: make test
+
+      # The audit runs here in its degraded mode: a clean runner has no sealed artifact
+      # and no Hugging Face cache, so the artifact-backed rows report `not_evidenced`
+      # with a reason. It still exercises the ownership contract and the verdict rules,
+      # and its verdict matches a fully-evidenced local run because environmental gaps
+      # are reported separately from failure causes.
+      #
+      # The script exits non-zero while any MUST capability is Planned, which is the
+      # truthful state today. `continue-on-error` is used rather than `|| true` so the
+      # step's real exit status stays visible in the run summary: masking it would make
+      # a failing gate render as a pass, which is the one thing this gate exists to
+      # prevent. Remove it once the verdict is expected to be PASS.
+      - name: Audit acceptance evidence
+        run: make acceptance
+        continue-on-error: true

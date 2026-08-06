@@ -546,7 +546,7 @@
       "old_child": "C07.2",
       "primary": true,
       "implementation_path": "reports/acceptance.json",
-      "validation_command": "make lint && make test && make evaluate && make demo",
+      "validation_command": "make lint && make test && make acceptance",
       "expected_evidence": "All MUST Implemented and applicable claims Measured"
     }
   ],
