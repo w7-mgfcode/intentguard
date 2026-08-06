@@ -518,7 +518,12 @@ class TestTheAuditDoesNotMeasureItself:
             )
 
     def test_the_masked_ci_step_is_recorded_honestly_in_the_documents(self) -> None:
-        """The masking is a limitation, and it has to be written down as one."""
+        """The masking is a limitation, and it has to be written down as one.
+
+        The invariant is disclosure, not the value of the verdict. A green step
+        conclusion is evidence of neither a pass nor a failure while the flag is set,
+        so both documents must say the step is masked whatever the audit reaches.
+        """
 
         limitations = (REPOSITORY_ROOT / "docs" / "LIMITATIONS.md").read_text(encoding="utf-8")
         status = (REPOSITORY_ROOT / "docs" / "IMPLEMENTATION_STATUS.md").read_text(
@@ -527,9 +532,10 @@ class TestTheAuditDoesNotMeasureItself:
 
         assert "continue-on-error" in limitations
         assert "exit code 2" in limitations
-        # The status document must not present the green run as a passing verdict.
-        assert "Strict-MVP verdict: FAIL" in status
+        # The status document must name the masking rather than let a green run stand
+        # in for a verdict it did not establish.
         assert "continue-on-error" in status
+        assert "masked" in status
 
     def test_the_ci_workflow_still_declares_the_checks_nfr002_names(self) -> None:
         """A guard on the real file: NFR-002's row is only as good as this."""

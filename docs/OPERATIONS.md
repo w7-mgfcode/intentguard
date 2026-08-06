@@ -19,6 +19,7 @@ make serve
 make demo
 make lint
 make test
+make acceptance
 ```
 
 `make setup` installs the exact environment represented by `uv.lock`. `make data`
@@ -32,7 +33,8 @@ loads both sealed bundles, reads the persisted threshold, and measures both mode
 untouched test split. `make serve` loads one sealed bundle and serves it over HTTP.
 `make demo` starts that same service and exercises it over a real socket. `make lint`
 runs Ruff, mypy, and the repository-foundation validator. `make test` runs the local
-tests.
+tests. `make acceptance` audits every MUST identifier against the evidence it can
+reach and prints the strict-MVP verdict.
 
 `make evaluate` requires exactly one bundle under each of
 `artifacts/intentguard-baseline/` and `artifacts/intentguard-distilbert/`. If a
@@ -134,6 +136,46 @@ covers the sampling protocol and never the measured durations. Everything else i
 
 The threshold lifecycle is fixed: `make train` chooses it from validation predictions and persists it in the immutable transformer artifact; `make evaluate` loads that value and applies it to test predictions without tuning on test labels. `scripts/evaluate.py` imports neither `select_threshold` nor any fitting function, so re-deriving a threshold from test data is not something that code path can express; a test enforces this by inspecting the script's syntax tree rather than trusting a text search.
 
+## The acceptance audit
+
+`make acceptance` runs `scripts/validate_acceptance.py`, which classifies every primary
+T/FR/NFR/AC identifier against the evidence it can actually reach and prints an
+enumerated strict-MVP verdict. It creates no evidence: it reads sealed bundles and
+generated reports, and reports an absence as an absence.
+
+It exits non-zero whenever the verdict is `FAIL`. That is the gate working, not a
+broken command. Note which layer you ran when quoting a failure: the script exits 1,
+while `make` reports `Error 1` and exits 2 when the recipe fails.
+
+Two variables redirect where the audit looks, because sealed bundles and their reports
+are produced per run and may live in another worktree:
+
+```bash
+# Audit against evidence produced elsewhere, without writing a report
+INTENTGUARD_ARTIFACT_ROOT=/path/to/artifacts \
+INTENTGUARD_REPORT_ROOT=/path/to/reports \
+  uv run python scripts/validate_acceptance.py --print-only
+```
+
+`INTENTGUARD_ARTIFACT_ROOT` locates the sealed bundles. `INTENTGUARD_REPORT_ROOT`
+locates the generated reports; when it is unset but the artifact root is redirected,
+the report root defaults to `<artifact root>/../reports`, so a run's evidence is never
+silently mixed with another's.
+
+**Prefer `--print-only` when auditing against evidence you did not produce in this
+worktree.** A default run writes `reports/acceptance.json` under the repository it
+runs in, and redirecting the report root at preserved evidence risks writing beside
+somebody else's records. When a written report is wanted, direct it explicitly with
+`--output` into the current worktree's ignored `reports/` directory. The script also
+refuses to replace a fully-evidenced report with a degraded one, but that guard is a
+backstop and not a substitute for choosing the flag deliberately.
+
+An audit run without the artifact root is **degraded, not failed**: it exercises the
+ownership contract and verdict rules, records each artifact-backed claim as
+`not_evidenced` with its reason, and reports those environmental gaps separately from
+verdict causes. A degraded run and a fully-evidenced run therefore reach the same
+cause list, which is the property that makes the CI invocation meaningful.
+
 ## Configuration and generated outputs
 
 Reviewed defaults live in `configs/default.toml`. The dataset revision is pinned
@@ -142,6 +184,41 @@ remains. Local settings may be supplied through variables shown in `.env.example
 do not commit `.env` files.
 
 Generated data, artifacts, and reports stay under their named root directories and are untracked except for README contracts. Serving loads an already-created artifact and never trains or mutates it.
+
+## Status vocabulary and fallback consequences
+
+Capability status and evidence are reported separately. A capability is `Implemented`
+when the required behaviour exists and its checks pass; a claim is `Measured` when
+reproducible output from the declared artifact and data backs it. `Partial`, `Mocked`,
+`Blocked`, and `Planned` each mean the capability is not complete, and **any MUST
+capability in one of those four states fails strict MVP.** Current per-capability
+status lives in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+
+Degraded paths may be operated, but each carries a consequence that must be recorded
+rather than absorbed:
+
+| Fallback | Consequence |
+|---|---|
+| No sealed bundle under the artifact root | `make serve` and `make demo` fail before binding a port; 22 tests skip; artifact-backed audit rows become `not_evidenced` |
+| Audit run without evidence roots | Verdict remains comparable, but 21 rows route to environmental gaps rather than passing |
+| Deterministic or mocked predictor | Permitted only in tests or an explicitly labelled degraded mode; it cannot satisfy a MUST requirement, and using it to do so fails strict MVP |
+| Synthetic data, frozen embeddings, or a one-epoch training path | Degraded evidence; the affected capability must be marked accurately, not reported as `Implemented` |
+| Missing metric or demo evidence | Document it as unavailable; substituting an invented or remembered figure is a reporting failure, not a gap |
+
+## Troubleshooting stop points
+
+Stop and report rather than working around these:
+
+- **Two bundles under one artifact directory.** `make evaluate` names both and stops
+  instead of guessing which configuration produced a metric.
+- **A provenance disagreement between bundles or splits.** Comparing models trained on
+  different data yields a number that resembles a comparison but is not one.
+- **A demo decision that does not hold.** That is a real observation about the loaded
+  artifact. Do not resolve it by changing the model or the threshold.
+- **A rejected `INTENTGUARD_LOG_LEVEL`.** The rejection names the accepted set; it
+  fails while resolving settings, before the bundle loads.
+- **A checksum failure on load.** The bundle is not the bundle its manifest describes;
+  do not re-seal it to make the error go away.
 
 ## CPU and GPU claims
 
