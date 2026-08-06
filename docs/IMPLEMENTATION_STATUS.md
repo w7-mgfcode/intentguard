@@ -45,10 +45,13 @@ Each row names the tree it was measured on, because a count carried across trees
 | Local, variable unset | current (650 collected) | 628 passed, 22 skipped | all 22 in `tests/integration/test_api.py`, gated on a sealed `intentguard-distilbert` bundle |
 | GitHub Actions, clean runner | `4cfc8ec` (637 collected) | 598 passed, 39 skipped | the same 22, plus 17 in `tests/integration/test_training_smoke.py` gated on the `distilbert-base-uncased` Hugging Face cache |
 | GitHub Actions, clean runner | `17c56d9` (650 collected) | 611 passed, 39 skipped | the same two gates, unchanged |
+| GitHub Actions, clean runner | `d31c333` (650 collected) | 611 passed, 39 skipped | the same two gates, unchanged |
 
 Within one tree the numbers differ only by which gate is unmet, and each gate's skip message names the command that satisfies it. The CI row was once an arithmetic expectation of 22 + 17 = 39 skips; run 31104632401 measured exactly that against `4cfc8ec`, so it is a measurement and must not be re-labelled an expectation.
 
-The `17c56d9` row was likewise recorded as an expectation first: the two gates are unchanged, so 650 collected minus 39 skips predicted 611 passed. [Run 31109003496](https://github.com/w7-mgfcode/intentguard/actions/runs/31109003496) measured exactly `611 passed, 39 skipped, 1 warning in 21.10s`, so it is now a measurement. Both CI rows are pinned to their tree, because a count carried across trees is exactly how the 585/563 figures went stale.
+The `17c56d9` row was likewise recorded as an expectation first: the two gates are unchanged, so 650 collected minus 39 skips predicted 611 passed. [Run 31109003496](https://github.com/w7-mgfcode/intentguard/actions/runs/31109003496) measured exactly `611 passed, 39 skipped, 1 warning in 21.10s`, so it is now a measurement.
+
+The `d31c333` row is a measurement from the outset: [run 31117901793 attempt 2](https://github.com/w7-mgfcode/intentguard/actions/runs/31117901793) measured `611 passed, 39 skipped, 1 warning in 19.14s`. It matches `17c56d9`'s counts because E08 changed no test count — the two documentation-only commits between those trees added no test and removed none, and the one assertion narrowed in `tests/unit/test_validate_acceptance.py` left the collected total at 650. Every CI row is pinned to its tree, because a count carried across trees is exactly how the 585/563 figures went stale.
 
 ## Strict-MVP verdict: PASS
 
@@ -58,16 +61,23 @@ The order matters and is recorded deliberately. The same audit on the same tree 
 
 Causes 2 and 3 were the audit's own correction to an earlier defect in it. Its first version passed any identifier whose named file was present on disk, consulting the owning capability's status only when the file was *missing*. That reported NFR-010 as `passed` while U08 was `Planned` — a Planned capability rendering as satisfied, which is precisely the substitution this gate exists to prevent. The status decides, and presence alone never passes.
 
-### The verdict is environment-independent
+### The verdict is environment-independent, and CPU CI has now confirmed it
 
-Both audit runs on this tree exit 0 and report `PASS`:
+Three audit runs on this tree exit 0 and report `PASS` — two local, one on a clean CPU runner:
 
 | Environment | Rows | Verdict |
 |---|---|---|
 | Fully evidenced (`INTENTGUARD_ARTIFACT_ROOT` and `INTENTGUARD_REPORT_ROOT` at the E05 roots) | 43 passed, 1 not evidenced, 0 blocked | `PASS`, exit 0 |
 | Degraded (neither variable set) | 23 passed, 21 not evidenced, 0 blocked | `PASS`, exit 0, with 14 environmental gaps reported separately |
+| CPU CI, degraded by construction — [run 31117901793 attempt 2](https://github.com/w7-mgfcode/intentguard/actions/runs/31117901793) on commit `d31c333` | 23 passed, 21 not evidenced, 0 blocked | `PASS`, exit 0, with the same 14 environmental gaps |
 
-The degraded run reaches the same verdict while routing 21 artifact-backed rows to environmental gaps, which is the property the audit was built to have. **The CI acceptance step still carries `continue-on-error: true`.** That masking is now unnecessary on this evidence, but removing it is a separate, separately scoped change: it alters what can break `main`'s CI, and the flag must not be removed on the strength of a local observation alone. Until it is removed, no green workflow badge is evidence of a passing verdict — read the step logs, as `docs/LIMITATIONS.md` records.
+The degraded run reaches the same verdict while routing 21 artifact-backed rows to environmental gaps, which is the property the audit was built to have. CI's counts are identical to the local degraded run's, row for row, which demonstrates that property in a second environment rather than asserting it.
+
+**That CI run is the first clean-runner audit of a tree where U08 is `Implemented`.** Its `foundation` job acquired a hosted runner, executed all seven steps, and measured `make lint` clean — Ruff, mypy strict over 52 files, 10/10 foundation checks — `make test` at **611 passed / 39 skipped** in 19.14s, and the acceptance audit at the verdict above. The audit recipe **exited 0 on its own merits**: the step logs contain no `##[error]`, no `make: *** [Makefile:38: acceptance] Error 1`, and no `##[error]Process completed with exit code 2`. For the first time in this repository the step's green conclusion and its true exit status agree.
+
+Attempt 1 of that same run is recorded here rather than discarded, because omitting it would overstate the evidence. It concluded `failure` at the workflow level without ever executing: no runner was acquired, the job was cancelled with **zero steps** and zero billable runtime, and it produced no lint, test, or audit output. That is an infrastructure non-result — not a failed check, and not evidence about this tree in either direction. It is the mirror image of the masking problem below, and the same lesson: a conclusion is never read in place of logs.
+
+**The CI acceptance step is still masked by `continue-on-error: true`.** The masking did not affect the run above, because nothing failed for it to hide. But the flag remains, and removing it is a separate, separately scoped change that alters what can break `main`'s CI. While the step is masked, a green workflow conclusion is still not self-evidencing: this verdict is trustworthy because the step logs were read, as `docs/LIMITATIONS.md` records, and not because the badge is green.
 
 ### Four causes were removed as circular, not as fixed
 
