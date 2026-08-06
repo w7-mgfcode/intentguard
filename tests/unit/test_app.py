@@ -25,6 +25,7 @@ from intentguard.app import (
     DEFAULT_PORT,
     HOST_VARIABLE,
     LOG_LEVEL_VARIABLE,
+    PERMITTED_LOG_LEVELS,
     PORT_VARIABLE,
     ServingError,
     resolve_serving_settings,
@@ -112,6 +113,55 @@ def test_an_out_of_range_port_is_refused(value: str) -> None:
 @pytest.mark.parametrize("value", ["1", "65535", "8080"])
 def test_boundary_ports_are_accepted(value: str) -> None:
     assert resolve_serving_settings({PORT_VARIABLE: value}).port == int(value)
+
+
+@pytest.mark.parametrize("value", PERMITTED_LOG_LEVELS)
+def test_every_permitted_log_level_is_accepted(value: str) -> None:
+    assert resolve_serving_settings({LOG_LEVEL_VARIABLE: value}).log_level == value
+
+
+@pytest.mark.parametrize("value", ["debug", "Warning", "iNfO"])
+def test_log_levels_are_case_insensitive_and_normalised_upward(value: str) -> None:
+    """`configure_logging` uppercases anyway; normalising here keeps one stored form."""
+
+    assert resolve_serving_settings({LOG_LEVEL_VARIABLE: value}).log_level == value.upper()
+
+
+@pytest.mark.parametrize("value", ["NOTSET", "WARN", "FATAL", "TRACE", "verbose", "9"])
+def test_a_log_level_only_one_consumer_understands_is_refused(value: str) -> None:
+    """The accepted set is the intersection of `logging` and Uvicorn, not the union.
+
+    `NOTSET`, `WARN`, and `FATAL` satisfy `configure_logging` but have no key in
+    Uvicorn's `LOG_LEVELS`; `TRACE` is the reverse. Accepting either kind would let
+    startup fail inside `uvicorn.run`, after the artifact was loaded and verified,
+    which contradicts this module's fail-before-listening contract.
+    """
+
+    with pytest.raises(ServingError, match=LOG_LEVEL_VARIABLE):
+        resolve_serving_settings({LOG_LEVEL_VARIABLE: value})
+
+
+def test_the_permitted_log_levels_are_accepted_by_both_consumers() -> None:
+    """Pinned against the real libraries, so an upgrade to either cannot drift silently."""
+
+    import logging
+
+    from uvicorn.config import LOG_LEVELS
+
+    from intentguard.logging import configure_logging
+
+    for level in PERMITTED_LOG_LEVELS:
+        assert isinstance(logging.getLevelName(level), int)
+        assert level.lower() in LOG_LEVELS
+        configure_logging(level)
+
+    # Restore the level the rest of the suite expects rather than leaving whichever
+    # value this loop happened to end on installed on the shared service logger.
+    configure_logging(DEFAULT_LOG_LEVEL)
+
+
+def test_the_default_log_level_is_itself_permitted() -> None:
+    assert DEFAULT_LOG_LEVEL in PERMITTED_LOG_LEVELS
 
 
 def test_the_configuration_path_is_repository_relative_and_present() -> None:
@@ -262,6 +312,23 @@ def test_the_demo_asserts_both_decisions_rather_than_only_printing_them() -> Non
     assert 'accepted["decision"] != "accept"' in source
     assert 'abstained["decision"] != "abstain"' in source
     assert "raise DemoError" in source
+
+
+def test_the_demo_handles_every_exception_its_own_code_can_raise() -> None:
+    """The guard must cover the failures the script actually has, not a plausible set.
+
+    Two are easy to miss because neither is a `ValueError`: reading a response field
+    that is absent raises `KeyError`, and a child ignoring both SIGTERM and SIGKILL
+    makes the escalated `wait` raise `subprocess.TimeoutExpired`. Either would surface
+    as a traceback instead of one diagnosable line.
+    """
+
+    source = (REPOSITORY_ROOT / "scripts" / "demo.py").read_text(encoding="utf-8")
+    guard = source.rsplit('if __name__ == "__main__":', maxsplit=1)[1]
+
+    for handled in ("DemoError", "OSError", "ValueError", "KeyError", "SubprocessError"):
+        assert handled in guard
+    assert "SystemExit" in guard
 
 
 def test_the_demo_kills_a_service_that_ignores_termination() -> None:

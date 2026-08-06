@@ -306,7 +306,13 @@ def create_app() -> FastAPI:
             503: {"model": ErrorResponse},
         },
     )
-    async def predict(request: Request, payload: PredictRequest) -> Response:
+    def predict(request: Request, payload: PredictRequest) -> Response:
+        # Deliberately `def` and not `async def`, which is the one place in this module
+        # where that matters. `predictor.predict` is a synchronous torch forward pass of
+        # several milliseconds; in a coroutine it would occupy the event loop for its
+        # whole duration, serialising concurrent requests and delaying `/health` behind
+        # inference. FastAPI runs a non-async handler in the threadpool instead. Nothing
+        # in this body awaits, so there is nothing to give up by not being a coroutine.
         request_id = _request_id_of(request)
         predictor: Predictor | None = app.state.predictor
         if predictor is None or not predictor.is_ready():
@@ -320,9 +326,14 @@ def create_app() -> FastAPI:
             )
             return error_response(MODEL_NOT_READY, request_id)
 
-        # Timed here rather than in middleware: `latency_ms` is defined as request
-        # validation plus inference plus response assembly, and the body is already
-        # validated by the time this handler runs.
+        # This window is inference only, which is narrower than the contract's wording,
+        # and the gap is stated rather than papered over. `INTERFACE_CONTRACT.md:72`
+        # defines `latency_ms` as request validation plus inference plus response
+        # assembly. Validation has already finished when this handler is entered, and
+        # assembly cannot be included in a number that has to be passed *into* the
+        # response being assembled — the value would have to exist before the work it
+        # measures. So the reported figure is a lower bound on the contract's quantity,
+        # and calling it validation-plus-assembly would be inventing a timing.
         started = time.perf_counter()
         try:
             outcome = predictor.predict(payload.text)

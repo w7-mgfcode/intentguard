@@ -56,6 +56,16 @@ DEFAULT_HOST: Final = "127.0.0.1"
 DEFAULT_PORT: Final = 8000
 DEFAULT_LOG_LEVEL: Final = "INFO"
 
+#: The log levels this service accepts, which is the intersection of what
+#: `configure_logging` and Uvicorn each accept — not the union. Python's `logging`
+#: resolves `NOTSET`, `WARN`, and `FATAL` that Uvicorn's `LOG_LEVELS` has no key for,
+#: and Uvicorn adds a `trace` level that `logging` does not know. Accepting a value
+#: only one of the two understands would produce a service that logs at a level the
+#: operator did not ask for, or a startup that fails after the artifact has already
+#: been loaded and verified. Compared case-insensitively; stored uppercase because
+#: that is the form `configure_logging` and `.env.example` use.
+PERMITTED_LOG_LEVELS: Final = ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG")
+
 #: The configuration file is repository-relative, resolved from this module rather
 #: than from the working directory, so `make serve` behaves the same from any cwd.
 CONFIG_PATH: Final = Path(__file__).resolve().parents[2] / "configs" / "default.toml"
@@ -85,12 +95,22 @@ def resolve_serving_settings(environ: Mapping[str, str] | None = None) -> Servin
     state. Blank values are treated as unset throughout, because a shell that exports
     a variable without a value should get the default rather than an empty host or a
     `ValueError` from `int("")`.
+
+    Every value is validated here, before `build_app` reads anything from disk, so a
+    misspelled variable fails in under a second rather than after a 265 MB bundle has
+    been loaded and re-hashed.
     """
 
     source = os.environ if environ is None else environ
 
     host = source.get(HOST_VARIABLE, "").strip() or DEFAULT_HOST
-    log_level = source.get(LOG_LEVEL_VARIABLE, "").strip() or DEFAULT_LOG_LEVEL
+
+    log_level = (source.get(LOG_LEVEL_VARIABLE, "").strip() or DEFAULT_LOG_LEVEL).upper()
+    if log_level not in PERMITTED_LOG_LEVELS:
+        raise ServingError(
+            f"{LOG_LEVEL_VARIABLE} must be one of {', '.join(PERMITTED_LOG_LEVELS)}, "
+            f"got {log_level!r}"
+        )
 
     raw_port = source.get(PORT_VARIABLE, "").strip()
     if not raw_port:

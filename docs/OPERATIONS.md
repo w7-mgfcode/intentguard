@@ -67,9 +67,10 @@ All modes run the same repository-content checks and inspect Git read-only. The 
 
 ## Serving and the strict demonstration
 
-`make serve` and `make demo` are wired to the real sealed artifact. Both run
-`python -m intentguard.app`, so the demo exercises the shipped serving path rather
-than a private one.
+`make serve` and `make demo` are wired to the real sealed artifact. Both reach
+`python -m intentguard.app`: `make serve` invokes it directly, and `make demo` runs
+`scripts/demo.py`, which starts that same entry point as a child process. The demo
+therefore exercises the shipped serving path rather than a private one.
 
 ```bash
 # Serve the bundle found under the configured artifact root
@@ -78,6 +79,12 @@ make serve
 # Start the same service, then prove one accept and one abstain over HTTP
 make demo
 ```
+
+`/v1/predict` is a synchronous handler on purpose, so its blocking forward pass runs
+in the threadpool rather than on the event loop. Measured locally with 16 concurrent
+predictions in flight, `/health` answered in 17 ms; the same check against a coroutine
+handler answered in 96 ms, because every request had to wait its turn on the loop.
+Both figures are single observations on one CPU machine, not a service-level claim.
 
 Both commands require an existing transformer bundle and neither can create one:
 serving loads the persisted threshold and has no code path that fits a model,
@@ -90,6 +97,14 @@ Point either command at a bundle outside the default root with
 `INTENTGUARD_PORT` (default `8000`), and `INTENTGUARD_LOG_LEVEL` (default `INFO`)
 control the listener. The default host is loopback deliberately: the service is
 unauthenticated, so binding every interface is opt-in rather than the default.
+
+`INTENTGUARD_LOG_LEVEL` accepts `CRITICAL`, `ERROR`, `WARNING`, `INFO`, or `DEBUG`,
+case-insensitively — the intersection of what the service logger and Uvicorn each
+understand, not the union. `NOTSET`, `WARN`, and `FATAL` are refused although Python's
+`logging` resolves them, and `TRACE` is refused although Uvicorn accepts it. All four
+are rejected while resolving settings, so an unusable value fails in under a second
+instead of after a 265 MB bundle has been loaded and re-hashed. Every rejection names
+the variable and the accepted set.
 
 `make demo` sends two requests: one in-domain, and the curated unsupported row
 `unsupported-001`, whose abstention was measured in the E05 evaluation. It reports

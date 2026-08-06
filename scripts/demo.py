@@ -287,5 +287,11 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (DemoError, OSError, ValueError) as error:
-        raise SystemExit(f"Demo failed: {error}") from error
+    except (DemoError, OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        # `KeyError` and `SubprocessError` are listed because both are reachable and
+        # neither is a `ValueError`: reading a field the response did not carry raises
+        # `KeyError`, and a child that ignores both SIGTERM and SIGKILL makes the second
+        # `wait` raise `TimeoutExpired`. A traceback for either would be a worse
+        # transcript than one diagnosable line. The type is named because `KeyError`
+        # stringifies to just the missing key, which alone explains nothing.
+        raise SystemExit(f"Demo failed: {type(error).__name__}: {error}") from error

@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from inspect import iscoroutinefunction
 from typing import NoReturn
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from intentguard.api import (
@@ -382,3 +384,25 @@ def test_predict_rejects_a_json_array_body(
     assert response.status_code == 422
     assert response.json()["error"]["code"] == INVALID_REQUEST
     assert predictor.calls == 0
+
+
+def test_the_prediction_handler_is_not_a_coroutine() -> None:
+    """Blocking inference must run in the threadpool, not on the event loop.
+
+    `predictor.predict` is a synchronous torch forward pass. As `async def` it would
+    hold the event loop for the whole inference, serialising concurrent requests and
+    delaying `/health` behind them; FastAPI runs a plain `def` handler in a thread
+    instead. Pinned because the two spellings are one keyword apart and the difference
+    is invisible to every single-request test in this file.
+    """
+
+    endpoints = {
+        route.path: route.endpoint
+        for route in create_app().routes
+        if isinstance(route, APIRoute)
+    }
+
+    assert not iscoroutinefunction(endpoints["/v1/predict"])
+    # `/health` stays a coroutine deliberately: it does no blocking work, so keeping it
+    # on the event loop means readiness cannot be starved by a busy threadpool.
+    assert iscoroutinefunction(endpoints["/health"])
