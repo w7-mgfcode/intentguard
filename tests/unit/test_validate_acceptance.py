@@ -557,7 +557,7 @@ class TestTheAuditDoesNotMeasureItself:
         # Reading a failure still requires knowing which layer produced it.
         assert "exit code 2" in limitations
         for document in (limitations, status):
-            assert "enforced" in document
+            assert "CI acceptance step is now enforced" in document
 
     def test_the_ci_workflow_still_declares_the_checks_nfr002_names(self) -> None:
         """A guard on the real file: NFR-002's row is only as good as this."""

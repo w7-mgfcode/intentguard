@@ -170,11 +170,12 @@ somebody else's records. When a written report is wanted, direct it explicitly w
 refuses to replace a fully-evidenced report with a degraded one, but that guard is a
 backstop and not a substitute for choosing the flag deliberately.
 
-An audit run without the artifact root is **degraded, not failed**: it exercises the
-ownership contract and verdict rules, records each artifact-backed claim as
-`not_evidenced` with its reason, and reports those environmental gaps separately from
-verdict causes. A degraded run and a fully-evidenced run therefore reach the same
-cause list, which is the property that makes the CI invocation meaningful.
+An audit run without the artifact root is **degraded**; the missing root is not itself
+a strict-MVP cause. It exercises the ownership contract and verdict rules, records each
+artifact-backed claim as `not_evidenced` with its reason, and reports those environmental
+gaps separately from verdict causes — but substantive causes still produce a non-zero
+exit. A degraded run and a fully-evidenced run therefore reach the same cause list, which
+is the property that makes the CI invocation meaningful.
 
 ## Configuration and generated outputs
 
