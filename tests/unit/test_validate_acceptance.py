@@ -499,11 +499,15 @@ class TestTheAuditDoesNotMeasureItself:
         assert row.reason is not None and "make test" in row.reason
 
     def test_the_audit_never_reads_a_ci_step_conclusion_as_a_verdict(self) -> None:
-        """CI's masked acceptance step must not be reachable as an evidence source.
+        """A CI step conclusion must not be reachable as an evidence source.
 
-        `continue-on-error: true` makes GitHub record `success` on a step that exited 2.
-        The only safe handling is for the audit to derive nothing from step conclusions
-        at all, so this asserts the script holds no notion of one.
+        This holds whether or not the step is masked, so removing
+        `continue-on-error: true` does not retire it. A conclusion can misreport its
+        step in both directions: masking made GitHub record `success` on a step that
+        exited 2, and a job cancelled before a runner is acquired records `failure`
+        while executing nothing. The only safe handling is for the audit to derive
+        nothing from conclusions at all, so this asserts the script holds no notion of
+        one.
         """
 
         source = (REPOSITORY_ROOT / "scripts" / "validate_acceptance.py").read_text(
@@ -517,19 +521,43 @@ class TestTheAuditDoesNotMeasureItself:
                 "success while exiting non-zero"
             )
 
-    def test_the_masked_ci_step_is_recorded_honestly_in_the_documents(self) -> None:
-        """The masking is a limitation, and it has to be written down as one."""
+    def test_the_enforced_acceptance_gate_is_recorded_honestly_in_the_documents(
+        self,
+    ) -> None:
+        """The gate's live enforcement state is what the documents must disclose.
+
+        The earlier invariant was that a masked step be written down as a limitation.
+        The step is no longer masked, so asserting the word "masked" appears would now
+        guard a historical sentence rather than a current fact. This pins the live
+        state instead: the workflow enforces the audit, and the documents say so.
+        """
 
         limitations = (REPOSITORY_ROOT / "docs" / "LIMITATIONS.md").read_text(encoding="utf-8")
         status = (REPOSITORY_ROOT / "docs" / "IMPLEMENTATION_STATUS.md").read_text(
             encoding="utf-8"
         )
+        # Comments are stripped before asserting: the workflow explains why the masking
+        # was removed, so a raw-text search would confuse naming the flag with setting
+        # it, and would fail the moment the history is documented.
+        workflow_lines = (
+            (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        directives = "\n".join(
+            line for line in workflow_lines if not line.lstrip().startswith("#")
+        )
 
-        assert "continue-on-error" in limitations
+        # The gate is enforced in the workflow, not merely described as enforced.
+        assert "continue-on-error" not in directives
+        # An exact ref must remain revalidatable without manufacturing a commit; the
+        # alternative recoveries evidence a different tree than the one under review.
+        assert "workflow_dispatch" in directives
+
+        # Reading a failure still requires knowing which layer produced it.
         assert "exit code 2" in limitations
-        # The status document must not present the green run as a passing verdict.
-        assert "Strict-MVP verdict: FAIL" in status
-        assert "continue-on-error" in status
+        for document in (limitations, status):
+            assert "CI acceptance step is now enforced" in document
 
     def test_the_ci_workflow_still_declares_the_checks_nfr002_names(self) -> None:
         """A guard on the real file: NFR-002's row is only as good as this."""
