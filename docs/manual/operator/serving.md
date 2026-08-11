@@ -41,7 +41,7 @@ The demo chooses its own ephemeral port (so a `make serve` already running is no
 - an in-domain request — `"How do I activate my new card?"` — expected `accept` (the recorded run answered `activate_my_card`);
 - the curated unsupported row `unsupported-001` from `tests/fixtures/unsupported_requests.jsonl` — expected `abstain`, with `intent: null`. This row's abstention was measured in the U05 evaluation, which is what makes it a fair expectation rather than a guess.
 
-It reports the confidences it observed but **asserts only the two decisions** — pinning a confidence would convert a measurement into a fixture. The child process is terminated in a `finally` block, escalating to `kill`, so no process outlives the run. A non-zero exit means one decision did not hold: that is a real observation about the loaded artifact and must not be resolved by changing the model or the threshold.
+It reports the confidences it observed but **asserts only the two decisions** — pinning a confidence would convert a measurement into a fixture. The child process is terminated in a `finally` block, escalating to `kill`, so no process outlives the run. A non-zero exit from a failed decision assertion means one decision did not hold and is a real observation about the loaded artifact; a non-zero exit from a missing bundle, startup, health-check, HTTP, or child-process failure is not — both are reported as `DemoError`, but only a failed assertion says anything about the model.
 
 In the recorded demo run, the abstained confidence agreed with the evaluation's value for the same row to seven decimal places — serving and evaluation reading the same weights and the same threshold, observably.
 

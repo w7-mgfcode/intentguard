@@ -1,6 +1,6 @@
 # Quickstart
 
-The five-command review path: prove the environment, the gates, the live service, and the acceptance verdict — in about five minutes on a warm environment.
+The five-command review path: prove the environment, the gates, the live service, and the acceptance verdict — a short, fixed sequence of five commands.
 
 **Purpose:** the shortest honest end-to-end exercise of the system.
 **Intended reader:** operators who finished [Installation](installation.md); reviewers following the README's "Review in five minutes".
@@ -30,7 +30,7 @@ make acceptance # audit every MUST identifier and print the strict-MVP verdict
 - train one locally: `make data && make baseline && make train` (see [Training](training.md) for what to expect), or
 - point at an existing bundle: `INTENTGUARD_ARTIFACT_ROOT=/path/to/artifacts make demo`.
 
-What the demo then does ([Serving](serving.md) has the full anatomy): starts `python -m intentguard.app` as a child process on an ephemeral port, waits for `/health` to report ready, sends one in-domain request (expected `accept`) and the curated unsupported row `unsupported-001` (expected `abstain`), prints the transcript, and terminates the child. It asserts only the two decisions — never a confidence value, because pinning one would convert a measurement into a fixture. A demo that exits non-zero is a real observation about the loaded artifact; do not resolve it by changing the model or the threshold.
+What the demo then does ([Serving](serving.md) has the full anatomy): starts `python -m intentguard.app` as a child process on an ephemeral port, waits for `/health` to report ready, sends one in-domain request (expected `accept`) and the curated unsupported row `unsupported-001` (expected `abstain`), prints the transcript, and terminates the child. It asserts only the two decisions — never a confidence value, because pinning one would convert a measurement into a fixture. A demo that exits non-zero for a failed decision assertion is a real observation about the loaded artifact and must not be resolved by changing the model or the threshold; a non-zero exit from a missing bundle, startup, health-check, HTTP, or child-process failure is an environment problem, not evidence about the model.
 
 **`make acceptance`** — runs `scripts/validate_acceptance.py`, which classifies all 42 primary T/FR/NFR/AC identifiers against the evidence it can reach and prints an enumerated strict-MVP verdict. Without evidence roots it runs **degraded**: artifact-backed rows report `not_evidenced` with reasons, separated from real verdict causes — the verdict remains comparable to a fully-evidenced run. A non-zero exit is the gate speaking, not a broken command. Details in [CI integration](../integrator/ci-integration.md).
 

@@ -110,7 +110,7 @@ Guarantees a client can rely on:
 
 ## Request correlation: `X-Request-ID`
 
-Send an optional `X-Request-ID` header matching `[A-Za-z0-9_-]{1,64}`. A valid ID is echoed in the response body and header and used in the service's structured log events. An **invalid ID is replaced, not rejected** — the header is a correlation hint, and an ID that fails the pattern is exactly the value that must not reach a log line unescaped. Server-generated IDs have the form `req_<32 hex>`. Every response, success or error, carries the `X-Request-ID` header.
+Send an optional `X-Request-ID` header matching `[A-Za-z0-9_-]{1,64}`. A valid ID is echoed in the response header always, and in the response body for `PredictResponse` and `ErrorResponse`. `HealthResponse` (the 200 body of `/health`) has no `request_id` field — `/health` guarantees only the `X-Request-ID` header. All IDs are used in the service's structured log events. An **invalid ID is replaced, not rejected** — the header is a correlation hint, and an ID that fails the pattern is exactly the value that must not reach a log line unescaped. Server-generated IDs have the form `req_<32 hex>`. Every response, success or error, carries the `X-Request-ID` header.
 
 ## Logging, from a client's perspective
 

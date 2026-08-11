@@ -34,7 +34,8 @@ The baseline bundle has the same four required metadata files with its fitted pi
 Verify one by hand:
 
 ```bash
-python3 - <<'EOF'
+BUNDLE=artifacts/intentguard-distilbert/<run_id>   # path to the bundle you're verifying
+python3 - "$BUNDLE" <<'EOF'
 import hashlib, json, pathlib, sys
 bundle = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 manifest = json.loads((bundle / "manifest.json").read_text())

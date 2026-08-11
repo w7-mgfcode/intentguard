@@ -26,8 +26,8 @@ No. That is a passed behavioral check over a fixture its author chose, meaningfu
 **Why does `make demo` fail on a fresh clone?**
 It loads a sealed bundle (roughly 257 MB) that the repository deliberately does not track. Train one (`make data && make baseline && make train`) or point `INTENTGUARD_ARTIFACT_ROOT` at an existing bundle ([Quickstart](operator/quickstart.md)).
 
-**Why did 22 tests skip?**
-Same reason — they are gated on the sealed bundle, and a skip is honest evidence of its absence ([Installation](operator/installation.md)).
+**Why did 22 API tests skip?**
+Same reason — they are gated on the sealed bundle. A clean runner skips 39 tests in total (22 API tests plus 17 training-smoke tests gated on the Hugging Face cache), and a skip is honest evidence of an absent artifact ([Installation](operator/installation.md)).
 
 **Why does `make train` finish instantly sometimes?**
 A bundle with the same content-derived run ID exists, so it is reused and only the report rebuilds. Identical configuration = identical identity, by design ([Training](operator/training.md)).

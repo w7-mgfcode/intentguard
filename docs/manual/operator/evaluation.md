@@ -7,7 +7,7 @@
 
 ## What you'll accomplish
 
-A `reports/` directory holding the evaluation run — `comparison.json`, risk/coverage curves, and the unsupported-fixture record — reproducing the numbers in [Interpreting results](interpreting-results.md). Prerequisites: both bundles from [Training](training.md); expect a roughly 30-second run, most of it latency measurement.
+A `reports/` directory holding the evaluation run — `comparison.json`, risk/coverage curves, and the unsupported-fixture record — reproducing the numbers in [Interpreting results](interpreting-results.md). Prerequisites: both bundles from [Training](training.md); most of the run time goes to latency measurement, not inference.
 
 ```bash
 make evaluate
