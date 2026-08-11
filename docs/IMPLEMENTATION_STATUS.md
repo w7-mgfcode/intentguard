@@ -2,6 +2,8 @@
 
 Status uses the repository vocabulary in `AGENTS.md`. `Measured` is an evidence qualifier and never substitutes for implementation.
 
+How to read this document: each row below names one delivery umbrella, its current status, and the concrete evidence behind that status — run IDs, measured figures, and links to the CI runs that produced them. Quote evidence from the row together with its caveats; the caveats are part of the claim. For a guided explanation of the metrics themselves, see the [user manual's results chapter](manual/operator/interpreting-results.md); for what these numbers cannot support, see [LIMITATIONS.md](LIMITATIONS.md).
+
 | Umbrella | Capability | Status | Evidence |
 |---|---|---|---|
 | U01 | Project foundation and reproducibility | Implemented | Gate A local checks pass; CPU validation passed for `main` commit `1495776` ([run 30853223606](https://github.com/w7-mgfcode/intentguard/actions/runs/30853223606)) |
