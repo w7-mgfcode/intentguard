@@ -6,6 +6,8 @@ The complete IntentGuard specification under [`docs/specification/`](specificati
 
 Use the authoritative [implementation command plan](specification/docs/IMPLEMENTATION_PLAN.md) for command ownership and expected evidence, and the authoritative [architecture](specification/docs/ARCHITECTURE.md) for component boundaries and data flow.
 
+This document is the terse operating contract. For step-by-step walk-throughs of the same commands — with prerequisites, expected outputs, and failure modes explained — the [user manual](manual/README.md) covers the full lifecycle: [installation](manual/operator/installation.md), [data](manual/operator/data.md), [training](manual/operator/training.md), [evaluation](manual/operator/evaluation.md), [serving](manual/operator/serving.md), a [configuration reference](manual/configuration.md), and [symptom-indexed troubleshooting](manual/troubleshooting.md).
+
 ## Current local commands
 
 ```bash

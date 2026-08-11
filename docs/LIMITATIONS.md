@@ -2,6 +2,8 @@
 
 The foundation, BANKING77 data contract, baseline, transformer training path, comparative evaluation, the serving boundary with its real-artifact demo, the CPU validation and acceptance gate, and the delivery documentation are all implemented, and the strict-MVP verdict is now `PASS`. See the [strict-MVP verdict](IMPLEMENTATION_STATUS.md) for the audit that issued it. A passing verdict does not make anything below less true: every limitation here is a property of what was measured, not an outstanding task, and none of them is retired by the gate passing.
 
+This document is the authority on what the measured numbers do not support. The [user manual](manual/README.md) explains the same measurements constructively — what each metric means and how to reproduce it — and defers here on every boundary. When quoting any result elsewhere, carry its limitation along: the two travel together, or the quote is an overclaim.
+
 - BANKING77 is pinned to `1fb62b1bb4635df59a8e1b2f2bc5e0643b2856c8`; data preparation validates its source split contract and records local provenance.
 - The DistilBERT base model is pinned to `12040accade4e8a0f71eabdb258fecc2e7e948be` and one CPU fine-tune has been run.
 - **The fine-tuned transformer loses to the lexical baseline.** On the test split its macro-F1 is 0.6620 against the baseline's 0.8654, a shortfall of 0.2034. This is a measured outcome reported as AC-004 requires, not a defect and not a pending fix. It reflects the frozen configuration in `configs/default.toml` — two CPU epochs at learning rate 2e-5 — and should not be read as a statement about DistilBERT's ceiling on BANKING77.

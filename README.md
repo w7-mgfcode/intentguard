@@ -18,7 +18,7 @@ make acceptance # audit every MUST identifier and print the strict-MVP verdict
 
 `make demo` and `make serve` load a **sealed transformer bundle that this repository does not track** — model weights are roughly 257 MB and are ignored by Git. They read the bundle from `artifacts/` by default; point them elsewhere with `INTENTGUARD_ARTIFACT_ROOT`. If no bundle exists, create one with `make train`, or see [docs/OPERATIONS.md](docs/OPERATIONS.md) for the artifact-root variables. Both commands fail before binding a port when the bundle is missing or fails a checksum, so a listening process is one whose artifact was verified.
 
-Then read, in order: [measured results](#measured-results) below, [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for what is implemented and measured, and [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for what these numbers do not support.
+Then read, in order: [measured results](#measured-results) below, [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for what is implemented and measured, and [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for what these numbers do not support. For a guided path — installation through serving, plus API and artifact references — the [user manual](docs/manual/README.md) covers both an operator and an integrator track.
 
 ## What it does, in lifecycle order
 
@@ -70,6 +70,7 @@ The current verdict and each capability's evidence live in [docs/IMPLEMENTATION_
 - `data/`, `artifacts/`, `reports/`: generated local outputs; only their README files are tracked.
 - `docs/specification/`: the sole authoritative specification.
 - `docs/backlog/`: local issue bodies, traceability, and Project design.
+- [docs/manual/](docs/manual/README.md): the full user manual — an operator track and an integrator track.
 - [docs/OPERATIONS.md](docs/OPERATIONS.md): commands, configuration, artifact paths, and troubleshooting.
 - [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md): capability status, evidence, and the strict-MVP verdict.
 - [docs/LIMITATIONS.md](docs/LIMITATIONS.md): limitations and unverified claims.
